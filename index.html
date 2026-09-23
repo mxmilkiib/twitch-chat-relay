@@ -82,6 +82,45 @@ messages containing raw Twitch IRC lines, plus periodic
     } catch (e) { /* keep last state on transient failure */ }
   }
 
+  // ---- third-party emote sets (7TV/BTTV/FFZ), refetched every 10 min ----
+  // The embedder's CSP blocks fetch() but allows img-src *, so the relay
+  // resolves the sets here and forwards a plain name -> CDN url map.
+  const EMOTE_POLL_MS = 10 * 60 * 1000;
+  let emoteTimer = null;
+
+  async function fetchEmotes() {
+    if (!peer || !channel) return;
+    const get = (u) => fetch(u).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    const emotes = {};
+    const user = await get(`https://api.ivr.fi/v2/twitch/user?login=${channel}`);
+    const twitchId = (Array.isArray(user) ? user[0] : user)?.id;
+    const [stvUser, stvGlobal, bttvUser, bttvGlobal, ffzRoom, ffzGlobal] = await Promise.all([
+      twitchId ? get(`https://7tv.io/v3/users/twitch/${twitchId}`) : null,
+      get('https://7tv.io/v3/emote-sets/global'),
+      twitchId ? get(`https://api.betterttv.net/3/cached/users/twitch/${twitchId}`) : null,
+      get('https://api.betterttv.net/3/cached/emotes/global'),
+      get(`https://api.frankerfacez.com/v1/room/${channel}`),
+      get('https://api.frankerfacez.com/v1/set/global'),
+    ]);
+    const ffzUrl = (e) => {
+      const u = e.urls && (e.urls['2'] || e.urls['1']);
+      return !u ? null : u.startsWith('http') ? u : 'https:' + u;
+    };
+    const addFfz = (sets) => {
+      for (const set of Object.values(sets || {}))
+        for (const e of set.emoticons || []) { const u = ffzUrl(e); if (u) emotes[e.name] = u; }
+    };
+    // globals first; channel sets override them
+    for (const e of stvGlobal?.emotes || []) emotes[e.name] = `https://cdn.7tv.app/emote/${e.id}/2x.webp`;
+    for (const e of bttvGlobal || []) emotes[e.code] = `https://cdn.betterttv.net/emote/${e.id}/2x`;
+    addFfz(ffzGlobal?.sets);
+    for (const e of stvUser?.emote_set?.emotes || []) emotes[e.name] = `https://cdn.7tv.app/emote/${e.id}/2x.webp`;
+    for (const e of [...(bttvUser?.channelEmotes || []), ...(bttvUser?.sharedEmotes || [])])
+      emotes[e.code] = `https://cdn.betterttv.net/emote/${e.id}/2x`;
+    addFfz(ffzRoom?.sets);
+    send({ type: 'emotes', emotes });
+  }
+
   window.addEventListener('message', (event) => {
     const d = event.data;
     if (!d || d.type !== 'join' || typeof d.channel !== 'string') return;
@@ -92,7 +131,9 @@ messages containing raw Twitch IRC lines, plus periodic
     const changed = ch !== channel;
     channel = ch;
     if (!pollTimer) pollTimer = setInterval(pollStream, POLL_MS);
+    if (!emoteTimer) emoteTimer = setInterval(fetchEmotes, EMOTE_POLL_MS);
     pollStream();
+    fetchEmotes();
     if (ws && ws.readyState === WebSocket.OPEN) {
       if (changed) ws.send('JOIN #' + channel);
       setStatus('connected');
