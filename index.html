@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>twitch chat relay</title>
+</head>
+<body>
+<p>Twitch chat relay. Embed this page in an iframe and postMessage
+<code>{type: 'join', channel: 'somechannel'}</code> to it; it replies with
+<code>{type: 'status', state}</code> and <code>{type: 'lines', lines}</code>
+messages containing raw Twitch IRC lines.</p>
+<script>
+// Anonymous read-only IRC-over-WebSocket relay for hosts whose CSP forbids
+// external connect-src (e.g. neocities). GitHub Pages serves no CSP, so the
+// WebSocket to Twitch works here and lines are forwarded to the embedder.
+(() => {
+  const WS_URL = 'wss://irc-ws.chat.twitch.tv:443';
+  let ws;
+  let channel = null;
+  let reconnectAttempt = 0;
+  let peer = null; // { source, origin } of the embedding page
+
+  function send(msg) {
+    if (peer) peer.source.postMessage(msg, peer.origin);
+  }
+
+  function setStatus(state) {
+    send({ type: 'status', state });
+  }
+
+  function connect() {
+    setStatus(reconnectAttempt === 0 ? 'connecting' : 'reconnecting');
+    ws = new WebSocket(WS_URL);
+
+    ws.onopen = () => {
+      ws.send('CAP REQ :twitch.tv/tags twitch.tv/commands');
+      ws.send('PASS justinfan');
+      ws.send('NICK justinfan' + Math.floor(Math.random() * 99999));
+      if (channel) ws.send('JOIN #' + channel);
+    };
+
+    ws.onmessage = (evt) => {
+      const lines = evt.data.split('\r\n').filter(Boolean);
+      for (const line of lines) {
+        if (line.startsWith('PING')) ws.send('PONG :tmi.twitch.tv');
+        else if (line.includes('RECONNECT')) { ws.close(); return; }
+        else if (line.includes(' 001 ')) { reconnectAttempt = 0; setStatus('connected'); }
+      }
+      send({ type: 'lines', lines });
+    };
+
+    ws.onclose = scheduleReconnect;
+    ws.onerror = () => ws.close();
+  }
+
+  function scheduleReconnect() {
+    setStatus('reconnecting');
+    const delay = Math.min(1000 * 2 ** reconnectAttempt, 30000);
+    reconnectAttempt++;
+    setTimeout(connect, delay);
+  }
+
+  window.addEventListener('message', (event) => {
+    const d = event.data;
+    if (!d || d.type !== 'join' || typeof d.channel !== 'string') return;
+    if (!/^https?:/.test(event.origin)) return;
+    peer = { source: event.source, origin: event.origin };
+    const ch = d.channel.toLowerCase().replace(/[^a-z0-9_]/g, '');
+    if (!ch) return;
+    const changed = ch !== channel;
+    channel = ch;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      if (changed) ws.send('JOIN #' + channel);
+      setStatus('connected');
+    } else if (!ws || ws.readyState === WebSocket.CLOSED) {
+      connect();
+    }
+  });
+})();
+</script>
+</body>
+</html>
