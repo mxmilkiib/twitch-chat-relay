@@ -8,7 +8,8 @@
 <p>Twitch chat relay. Embed this page in an iframe and postMessage
 <code>{type: 'join', channel: 'somechannel'}</code> to it; it replies with
 <code>{type: 'status', state}</code> and <code>{type: 'lines', lines}</code>
-messages containing raw Twitch IRC lines.</p>
+messages containing raw Twitch IRC lines, plus periodic
+<code>{type: 'stream', uptime, viewers, title}</code> status from decapi.</p>
 <script>
 // Anonymous read-only IRC-over-WebSocket relay for hosts whose CSP forbids
 // external connect-src (e.g. neocities). GitHub Pages serves no CSP, so the
@@ -60,6 +61,27 @@ messages containing raw Twitch IRC lines.</p>
     setTimeout(connect, delay);
   }
 
+  // ---- stream status polling via decapi (public, no auth needed) ----
+  const POLL_MS = 60000;
+  let pollTimer = null;
+
+  async function pollStream() {
+    if (!peer || !channel) return;
+    try {
+      const [uptime, viewers, title] = await Promise.all([
+        fetch(`https://decapi.me/twitch/uptime/${channel}`).then((r) => r.text()),
+        fetch(`https://decapi.me/twitch/viewercount/${channel}`).then((r) => r.text()),
+        fetch(`https://decapi.me/twitch/title/${channel}`).then((r) => r.text()),
+      ]);
+      send({
+        type: 'stream',
+        uptime: uptime.trim(),
+        viewers: viewers.trim(),
+        title: title.trim(),
+      });
+    } catch (e) { /* keep last state on transient failure */ }
+  }
+
   window.addEventListener('message', (event) => {
     const d = event.data;
     if (!d || d.type !== 'join' || typeof d.channel !== 'string') return;
@@ -69,6 +91,8 @@ messages containing raw Twitch IRC lines.</p>
     if (!ch) return;
     const changed = ch !== channel;
     channel = ch;
+    if (!pollTimer) pollTimer = setInterval(pollStream, POLL_MS);
+    pollStream();
     if (ws && ws.readyState === WebSocket.OPEN) {
       if (changed) ws.send('JOIN #' + channel);
       setStatus('connected');
