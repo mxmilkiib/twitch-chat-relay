@@ -102,7 +102,8 @@ messages containing raw Twitch IRC lines, plus periodic
       body: JSON.stringify({ query:
         `{ user(login: "${channel.replace(/[^a-zA-Z0-9_]/g, '')}") { videos(first: 1, type: ARCHIVE, sort: TIME) { edges { node { createdAt lengthSeconds } } } } }` }),
     }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
-    const [stvUser, stvGlobal, bttvUser, bttvGlobal, ffzRoom, ffzGlobal, vodResp] = await Promise.all([
+    const [stvUser, stvGlobal, bttvUser, bttvGlobal, ffzRoom, ffzGlobal, vodResp,
+           badgesGlobal, badgesChan, ffzAnim] = await Promise.all([
       twitchId ? get(`https://7tv.io/v3/users/twitch/${twitchId}`) : null,
       get('https://7tv.io/v3/emote-sets/global'),
       twitchId ? get(`https://api.betterttv.net/3/cached/users/twitch/${twitchId}`) : null,
@@ -110,28 +111,52 @@ messages containing raw Twitch IRC lines, plus periodic
       get(`https://api.frankerfacez.com/v1/room/${channel}`),
       get('https://api.frankerfacez.com/v1/set/global'),
       vodGql,
+      get('https://api.ivr.fi/v2/twitch/badges/global'),
+      twitchId ? get(`https://api.ivr.fi/v2/twitch/badges/channel?id=${twitchId}`) : null,
+      twitchId ? get(`https://api.betterttv.net/3/cached/frankerfacez/users/twitch/${twitchId}`) : null,
     ]);
+    const emoteSrc = {}, zeroWidth = [];
     const ffzUrl = (e) => {
       const u = e.urls && (e.urls['2'] || e.urls['1']);
       return !u ? null : u.startsWith('http') ? u : 'https:' + u;
     };
     const addFfz = (sets) => {
       for (const set of Object.values(sets || {}))
-        for (const e of set.emoticons || []) { const u = ffzUrl(e); if (u) emotes[e.name] = u; }
+        for (const e of set.emoticons || [])
+          { const u = ffzUrl(e); if (u) { emotes[e.name] = u; emoteSrc[e.name] = 'FFZ'; } }
+    };
+    const add7tv = (list) => {
+      for (const e of list || []) {
+        emotes[e.name] = `https://cdn.7tv.app/emote/${e.id}/2x.webp`;
+        emoteSrc[e.name] = '7TV';
+        if (e.flags & 1) zeroWidth.push(e.name); // overlay emote, stacks on the previous one
+      }
     };
     // globals first; channel sets override them
-    for (const e of stvGlobal?.emotes || []) emotes[e.name] = `https://cdn.7tv.app/emote/${e.id}/2x.webp`;
-    for (const e of bttvGlobal || []) emotes[e.code] = `https://cdn.betterttv.net/emote/${e.id}/2x`;
+    add7tv(stvGlobal?.emotes);
+    for (const e of bttvGlobal || [])
+      { emotes[e.code] = `https://cdn.betterttv.net/emote/${e.id}/2x`; emoteSrc[e.code] = 'BTTV'; }
     addFfz(ffzGlobal?.sets);
-    for (const e of stvUser?.emote_set?.emotes || []) emotes[e.name] = `https://cdn.7tv.app/emote/${e.id}/2x.webp`;
+    add7tv(stvUser?.emote_set?.emotes);
     for (const e of [...(bttvUser?.channelEmotes || []), ...(bttvUser?.sharedEmotes || [])])
-      emotes[e.code] = `https://cdn.betterttv.net/emote/${e.id}/2x`;
+      { emotes[e.code] = `https://cdn.betterttv.net/emote/${e.id}/2x`; emoteSrc[e.code] = 'BTTV'; }
     addFfz(ffzRoom?.sets);
+    // animated FFZ emotes (FFZ:AP) come through BTTV's frankerfacez cache
+    for (const e of ffzAnim || []) {
+      const u = e.images?.['2x'] || e.images?.['1x'];
+      if (u) { emotes[e.code] = u; emoteSrc[e.code] = 'FFZ animated'; }
+    }
+    // badge set 'set_id' -> { version: url }; channel sets override globals
+    const badges = {};
+    for (const s of [...(badgesGlobal || []), ...(badgesChan || [])])
+      badges[s.set_id] = { ...(badges[s.set_id] || {}),
+        ...Object.fromEntries((s.versions || [])
+          .map((v) => [v.id, v.image_url_2x || v.image_url_1x])) };
     const lastBroadcast = (Array.isArray(user) ? user[0] : user)?.lastBroadcast || null;
     const vod = vodResp?.data?.user?.videos?.edges?.[0]?.node;
     const lastVod = vod ? { start: vod.createdAt,
       end: new Date(Date.parse(vod.createdAt) + vod.lengthSeconds * 1000).toISOString() } : null;
-    send({ type: 'emotes', emotes, lastBroadcast, lastVod });
+    send({ type: 'emotes', emotes, emoteSrc, zeroWidth, badges, lastBroadcast, lastVod });
   }
 
   // ---- nitter instance selection via status.d420.de ----
