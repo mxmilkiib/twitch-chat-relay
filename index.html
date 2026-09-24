@@ -134,6 +134,31 @@ messages containing raw Twitch IRC lines, plus periodic
     send({ type: 'emotes', emotes, lastBroadcast, lastVod });
   }
 
+  // ---- nitter instance selection via status.d420.de ----
+  // The tracker lists live nitter hosts with health and response-time
+  // columns; the fastest healthy host is forwarded so the embedder's
+  // twitter/x links land on a working mirror instead of a stale one.
+  const NITTER_POLL_MS = 15 * 60 * 1000;
+  let nitterTimer = null;
+
+  async function fetchNitterHost() {
+    if (!peer) return;
+    try {
+      const html = await fetch('https://status.d420.de/')
+        .then((r) => (r.ok ? r.text() : null));
+      if (!html) return;
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      let best = null, bestMs = Infinity;
+      for (const tr of doc.querySelectorAll('table tr')) {
+        const host = tr.querySelector('td a[href^="http"]')?.href;
+        const healthy = tr.querySelector('span[aria-label="healthy"]');
+        const ms = parseInt(tr.querySelector('td[data-name="average"]')?.textContent, 10);
+        if (host && healthy && ms > 0 && ms < bestMs) { best = host; bestMs = ms; }
+      }
+      if (best) send({ type: 'nitter', host: best });
+    } catch (e) { /* keep last pick */ }
+  }
+
   window.addEventListener('message', (event) => {
     const d = event.data;
     if (!d || d.type !== 'join' || typeof d.channel !== 'string') return;
@@ -145,8 +170,10 @@ messages containing raw Twitch IRC lines, plus periodic
     channel = ch;
     if (!pollTimer) pollTimer = setInterval(pollStream, POLL_MS);
     if (!emoteTimer) emoteTimer = setInterval(fetchEmotes, EMOTE_POLL_MS);
+    if (!nitterTimer) nitterTimer = setInterval(fetchNitterHost, NITTER_POLL_MS);
     pollStream();
     fetchEmotes();
+    fetchNitterHost();
     if (ws && ws.readyState === WebSocket.OPEN) {
       if (changed) ws.send('JOIN #' + channel);
       setStatus('connected');

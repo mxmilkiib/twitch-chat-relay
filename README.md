@@ -39,6 +39,8 @@ Relay → parent:
   merged from 7TV, BTTV and FFZ (globals + channel sets), plus stream
   history: `lastBroadcast` from [ivr.fi](https://api.ivr.fi) and the
   latest VOD's start/end from Twitch's public GraphQL endpoint
+- `{type: 'nitter', host}` — fastest healthy nitter instance scraped
+  from [status.d420.de](https://status.d420.de/), rechecked every 15 min
 
 All fetches are anonymous — no tokens, no login.
 
