@@ -87,6 +87,7 @@ messages containing raw Twitch IRC lines, plus periodic
   // resolves the sets here and forwards a plain name -> CDN url map.
   const EMOTE_POLL_MS = 10 * 60 * 1000;
   let emoteTimer = null;
+  let lastEmoteJson = null, lastEmotePeer = null;
 
   async function fetchEmotes() {
     if (!peer || !channel) return;
@@ -156,6 +157,11 @@ messages containing raw Twitch IRC lines, plus periodic
     const vod = vodResp?.data?.user?.videos?.edges?.[0]?.node;
     const lastVod = vod ? { start: vod.createdAt,
       end: new Date(Date.parse(vod.createdAt) + vod.lengthSeconds * 1000).toISOString() } : null;
+    // skip re-sending an identical payload to the same peer: the page would
+    // re-walk every chat row for nothing. a fresh join() makes a new peer.
+    const json = JSON.stringify([emotes, emoteSrc, zeroWidth, badges, lastBroadcast, lastVod]);
+    if (json === lastEmoteJson && peer === lastEmotePeer) return;
+    lastEmoteJson = json; lastEmotePeer = peer;
     send({ type: 'emotes', emotes, emoteSrc, zeroWidth, badges, lastBroadcast, lastVod });
   }
 
