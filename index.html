@@ -94,13 +94,22 @@ messages containing raw Twitch IRC lines, plus periodic
     const emotes = {};
     const user = await get(`https://api.ivr.fi/v2/twitch/user?login=${channel}`);
     const twitchId = (Array.isArray(user) ? user[0] : user)?.id;
-    const [stvUser, stvGlobal, bttvUser, bttvGlobal, ffzRoom, ffzGlobal] = await Promise.all([
+    // Latest VOD via Twitch's public GraphQL client-id: gives the real
+    // start and end of the last recorded broadcast.
+    const vodGql = fetch('https://gql.twitch.tv/gql', {
+      method: 'POST',
+      headers: { 'Client-ID': 'kimne78kx3ncx6brgo4mv6wki5h1ko', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query:
+        `{ user(login: "${channel.replace(/[^a-zA-Z0-9_]/g, '')}") { videos(first: 1, type: ARCHIVE, sort: TIME) { edges { node { createdAt lengthSeconds } } } } }` }),
+    }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    const [stvUser, stvGlobal, bttvUser, bttvGlobal, ffzRoom, ffzGlobal, vodResp] = await Promise.all([
       twitchId ? get(`https://7tv.io/v3/users/twitch/${twitchId}`) : null,
       get('https://7tv.io/v3/emote-sets/global'),
       twitchId ? get(`https://api.betterttv.net/3/cached/users/twitch/${twitchId}`) : null,
       get('https://api.betterttv.net/3/cached/emotes/global'),
       get(`https://api.frankerfacez.com/v1/room/${channel}`),
       get('https://api.frankerfacez.com/v1/set/global'),
+      vodGql,
     ]);
     const ffzUrl = (e) => {
       const u = e.urls && (e.urls['2'] || e.urls['1']);
@@ -119,7 +128,10 @@ messages containing raw Twitch IRC lines, plus periodic
       emotes[e.code] = `https://cdn.betterttv.net/emote/${e.id}/2x`;
     addFfz(ffzRoom?.sets);
     const lastBroadcast = (Array.isArray(user) ? user[0] : user)?.lastBroadcast || null;
-    send({ type: 'emotes', emotes, lastBroadcast });
+    const vod = vodResp?.data?.user?.videos?.edges?.[0]?.node;
+    const lastVod = vod ? { start: vod.createdAt,
+      end: new Date(Date.parse(vod.createdAt) + vod.lengthSeconds * 1000).toISOString() } : null;
+    send({ type: 'emotes', emotes, lastBroadcast, lastVod });
   }
 
   window.addEventListener('message', (event) => {
