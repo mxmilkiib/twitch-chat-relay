@@ -118,7 +118,8 @@ messages containing raw Twitch IRC lines, plus periodic
     for (const e of [...(bttvUser?.channelEmotes || []), ...(bttvUser?.sharedEmotes || [])])
       emotes[e.code] = `https://cdn.betterttv.net/emote/${e.id}/2x`;
     addFfz(ffzRoom?.sets);
-    send({ type: 'emotes', emotes });
+    const lastBroadcast = (Array.isArray(user) ? user[0] : user)?.lastBroadcast || null;
+    send({ type: 'emotes', emotes, lastBroadcast });
   }
 
   window.addEventListener('message', (event) => {
