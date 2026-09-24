@@ -11,7 +11,7 @@ any page on any host can use it for any Twitch channel, one channel per
 iframe instance.
 
 Single file: `index.html`. Companion frontend:
-[hasanabi.neocities.org](https://github.com/mxmilkiib/hasanabi.neocities.org).
+[HasanAbi Chat Thing](https://github.com/mxmilkiib/hasanabi.neocities.org).
 
 ## Usage
 
