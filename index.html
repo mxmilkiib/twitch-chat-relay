@@ -206,7 +206,7 @@ messages containing raw Twitch IRC lines, plus periodic
       // sort oldest-first so replays append in chat order
       const ts = (l) => +(/tmi-sent-ts=(\d+)/.exec(l) || [])[1] || 0;
       lines.sort((a, b) => ts(a) - ts(b));
-      if (lines.length) send({ type: 'lines', lines });
+      if (lines.length) send({ type: 'lines', lines, replay: true });
     } catch (e) { /* backlog is best-effort */ }
   }
 
