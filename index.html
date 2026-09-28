@@ -190,9 +190,34 @@ messages containing raw Twitch IRC lines, plus periodic
     } catch (e) { /* keep last pick */ }
   }
 
+  // ---- missed-line backfill via recent-messages.robotty.de ----
+  // A suspended embedder (backgrounded tab, phone asleep) misses live IRC
+  // lines. On wake it asks for the backlog here; the page skips already-
+  // rendered rows by msg id. Debounced since robotty is a shared service.
+  let lastBackfill = 0;
+  async function backfill() {
+    if (!peer || !channel || Date.now() - lastBackfill < 5000) return;
+    lastBackfill = Date.now();
+    try {
+      const j = await fetch(`https://recent-messages.robotty.de/api/v2/recent-messages/${channel}?limit=200`)
+        .then((r) => (r.ok ? r.json() : null));
+      const lines = (j && Array.isArray(j.messages) ? j.messages : [])
+        .filter((l) => typeof l === 'string');
+      // sort oldest-first so replays append in chat order
+      const ts = (l) => +(/tmi-sent-ts=(\d+)/.exec(l) || [])[1] || 0;
+      lines.sort((a, b) => ts(a) - ts(b));
+      if (lines.length) send({ type: 'lines', lines });
+    } catch (e) { /* backlog is best-effort */ }
+  }
+
   window.addEventListener('message', (event) => {
     const d = event.data;
-    if (!d || d.type !== 'join' || typeof d.channel !== 'string') return;
+    if (!d) return;
+    if (d.type === 'backfill') {
+      if (peer && event.source === peer.source && event.origin === peer.origin) backfill();
+      return;
+    }
+    if (d.type !== 'join' || typeof d.channel !== 'string') return;
     if (!/^https?:/.test(event.origin)) return;
     peer = { source: event.source, origin: event.origin };
     const ch = d.channel.toLowerCase().replace(/[^a-z0-9_]/g, '');

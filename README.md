@@ -26,7 +26,9 @@ iframe.contentWindow.postMessage({ type: 'join', channel: 'somechannel' },
 
 ## Protocol
 
-Parent → relay: `{type: 'join', channel}`
+Parent → relay: `{type: 'join', channel}`, `{type: 'backfill'}` —
+backfill fetches the recent backlog from recent-messages.robotty.de and
+returns it as `lines` for the embedder to dedup
 
 Relay → parent:
 
