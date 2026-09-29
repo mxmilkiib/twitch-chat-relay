@@ -30,6 +30,19 @@ Parent → relay: `{type: 'join', channel}`, `{type: 'backfill'}` —
 backfill fetches the recent backlog from recent-messages.robotty.de and
 returns it as `lines` for the embedder to dedup
 
+Optional authenticated mode:
+
+- `{type: 'auth', token}` — a chat-scoped user token (Twitch implicit
+  OAuth grant). The relay validates it at `id.twitch.tv/oauth2/validate`,
+  replies `{type: 'auth', login}` (or `{type: 'auth', error}`), and
+  reconnects the socket with `PASS oauth:`/`NICK <login>` instead of the
+  anonymous justinfan account. `token: null` logs out and drops back to
+  anonymous.
+- `{type: 'send', text}` — once authenticated, sends
+  `PRIVMSG #<channel> :<text>` on the same socket. Twitch replies with a
+  `NOTICE` line on rejections (slow mode, followers-only, etc.), which
+  flows through `lines` like everything else.
+
 Relay → parent:
 
 - `{type: 'status', state}` — connecting / connected / reconnecting
@@ -45,8 +58,12 @@ Relay → parent:
   the latest VOD's start/end from Twitch's public GraphQL endpoint
 - `{type: 'nitter', host}` — fastest healthy nitter instance scraped
   from [status.d420.de](https://status.d420.de/), rechecked every 15 min
+- `{type: 'auth', login, scopes}` or `{type: 'auth', error}` — result of
+  an `auth` request (see above)
 
-All fetches are anonymous — no tokens, no login.
+The relay holds the token only in memory — it isn't stored or forwarded
+anywhere except the Twitch socket. (The embedder may persist it locally;
+on this page it lives in localStorage until logout.)
 
 ## Deploy
 

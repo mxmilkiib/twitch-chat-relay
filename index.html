@@ -9,7 +9,10 @@
 <code>{type: 'join', channel: 'somechannel'}</code> to it; it replies with
 <code>{type: 'status', state}</code> and <code>{type: 'lines', lines}</code>
 messages containing raw Twitch IRC lines, plus periodic
-<code>{type: 'stream', uptime, viewers, title}</code> status from decapi.</p>
+<code>{type: 'stream', uptime, viewers, title}</code> status from decapi.
+<code>{type: 'auth', token}</code> logs the socket in as that user, after
+which <code>{type: 'send', text}</code> posts to the joined channel;
+the relay replies <code>{type: 'auth', login}</code> or an error.</p>
 <script>
 // Anonymous read-only IRC-over-WebSocket relay for hosts whose CSP forbids
 // external connect-src (e.g. neocities). GitHub Pages serves no CSP, so the
@@ -20,6 +23,7 @@ messages containing raw Twitch IRC lines, plus periodic
   let channel = null;
   let reconnectAttempt = 0;
   let peer = null; // { source, origin } of the embedding page
+  let auth = null; // { token, login } - user creds replace the anon nick
 
   function send(msg) {
     if (peer) peer.source.postMessage(msg, peer.origin);
@@ -35,8 +39,13 @@ messages containing raw Twitch IRC lines, plus periodic
 
     ws.onopen = () => {
       ws.send('CAP REQ :twitch.tv/tags twitch.tv/commands');
-      ws.send('PASS justinfan');
-      ws.send('NICK justinfan' + Math.floor(Math.random() * 99999));
+      if (auth) {
+        ws.send('PASS oauth:' + auth.token);
+        ws.send('NICK ' + auth.login);
+      } else {
+        ws.send('PASS justinfan');
+        ws.send('NICK justinfan' + Math.floor(Math.random() * 99999));
+      }
       if (channel) ws.send('JOIN #' + channel);
     };
 
@@ -45,6 +54,12 @@ messages containing raw Twitch IRC lines, plus periodic
       for (const line of lines) {
         if (line.startsWith('PING')) ws.send('PONG :tmi.twitch.tv');
         else if (line.includes('RECONNECT')) { ws.close(); return; }
+        else if (/authentication failed|Improperly formatted auth/.test(line)) {
+          auth = null;
+          send({ type: 'auth', error: 'login rejected' });
+          ws.close();
+          return;
+        }
         else if (line.includes(' 001 ')) { reconnectAttempt = 0; setStatus('connected'); }
       }
       send({ type: 'lines', lines });
@@ -165,6 +180,33 @@ messages containing raw Twitch IRC lines, plus periodic
     send({ type: 'emotes', emotes, emoteSrc, zeroWidth, badges, lastBroadcast, lastVod });
   }
 
+  // ---- user auth: the embedder hands over an implicit-grant token; ----
+  // validating it here (no CSP on this origin) yields the login, then the
+  // socket reconnects with user creds so PRIVMSG can be sent as them.
+  async function validateToken(token) {
+    try {
+      const j = await fetch('https://id.twitch.tv/oauth2/validate', {
+        headers: { Authorization: 'OAuth ' + token },
+      }).then((r) => (r.ok ? r.json() : null));
+      return j && j.login ? j : null;
+    } catch (e) { return null; }
+  }
+
+  async function setAuth(token) {
+    if (!token) {
+      if (!auth) return;
+      auth = null;
+      send({ type: 'auth', login: null });
+      if (ws) ws.close();
+      return;
+    }
+    const v = await validateToken(token);
+    if (!v) { send({ type: 'auth', error: 'token rejected' }); return; }
+    auth = { token, login: v.login };
+    send({ type: 'auth', login: v.login, scopes: v.scope });
+    if (ws) ws.close(); // reconnect logs in as the user and re-joins
+  }
+
   // ---- nitter instance selection via status.d420.de ----
   // The tracker lists live nitter hosts with health and response-time
   // columns; the fastest healthy host is forwarded so the embedder's
@@ -215,6 +257,18 @@ messages containing raw Twitch IRC lines, plus periodic
     if (!d) return;
     if (d.type === 'backfill') {
       if (peer && event.source === peer.source && event.origin === peer.origin) backfill();
+      return;
+    }
+    if (d.type === 'auth') {
+      if (peer && event.source === peer.source && event.origin === peer.origin)
+        setAuth(typeof d.token === 'string' && d.token ? d.token : null);
+      return;
+    }
+    if (d.type === 'send') {
+      if (peer && event.source === peer.source && event.origin === peer.origin
+          && auth && channel && ws && ws.readyState === WebSocket.OPEN
+          && typeof d.text === 'string' && d.text.trim())
+        ws.send('PRIVMSG #' + channel + ' :' + d.text.trim().slice(0, 500));
       return;
     }
     if (d.type !== 'join' || typeof d.channel !== 'string') return;
