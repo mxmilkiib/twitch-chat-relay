@@ -213,23 +213,33 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
   // twitter/x links land on a working mirror instead of a stale one.
   const NITTER_POLL_MS = 15 * 60 * 1000;
   let nitterTimer = null;
+  let lastNitter = undefined;
 
   async function fetchNitterHost() {
     if (!peer) return;
+    let best = null;
     try {
       const html = await fetch('https://status.d420.de/')
         .then((r) => (r.ok ? r.text() : null));
-      if (!html) return;
-      const doc = new DOMParser().parseFromString(html, 'text/html');
-      let best = null, bestMs = Infinity;
-      for (const tr of doc.querySelectorAll('table tr')) {
-        const host = tr.querySelector('td a[href^="http"]')?.href;
-        const healthy = tr.querySelector('span[aria-label="healthy"]');
-        const ms = parseInt(tr.querySelector('td[data-name="average"]')?.textContent, 10);
-        if (host && healthy && ms > 0 && ms < bestMs) { best = host; bestMs = ms; }
+      if (html) {
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        let bestMs = Infinity;
+        for (const tr of doc.querySelectorAll('table tr')) {
+          const host = tr.querySelector('td a[href^="http"]')?.href;
+          const healthy = tr.querySelector('span[aria-label="healthy"]');
+          const ms = parseInt(tr.querySelector('td[data-name="average"]')?.textContent, 10);
+          if (host && healthy && ms > 0 && ms < bestMs) { best = host; bestMs = ms; }
+        }
       }
-      if (best) send({ type: 'nitter', host: best });
     } catch (e) { /* keep last pick */ }
+    // tracker "healthy" can still mean a dead box - nitter sends no CORS
+    // headers, so a no-cors probe only proves the host answers at all
+    if (best) {
+      try {
+        if ((await fetch(best, { mode: 'no-cors' })).type !== 'opaque') best = null;
+      } catch (e) { best = null; }
+    }
+    if (best !== lastNitter) { lastNitter = best; send({ type: 'nitter', host: best }); }
   }
 
   // ---- embedder repo metadata for the help panel ----
