@@ -232,6 +232,18 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
     } catch (e) { /* keep last pick */ }
   }
 
+  // ---- embedder repo metadata for the help panel ----
+  // api.github.com sends ACAO:* so this plain fetch works; unauthenticated
+  // rate limit (60/h per IP) is per-visitor, so no caching needed.
+  async function fetchRepo() {
+    if (!peer) return;
+    try {
+      const j = await fetch('https://api.github.com/repos/mxmilkiib/hasanabi.neocities.org')
+        .then((r) => (r.ok ? r.json() : null));
+      if (j) send({ type: 'repo', stars: j.stargazers_count, created: j.created_at, pushed: j.pushed_at });
+    } catch (e) { /* stats are cosmetic */ }
+  }
+
   // ---- missed-line backfill via recent-messages.robotty.de ----
   // A suspended embedder (backgrounded tab, phone asleep) misses live IRC
   // lines. On wake it asks for the backlog here; the page skips already-
@@ -284,6 +296,7 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
     pollStream();
     fetchEmotes();
     fetchNitterHost();
+    fetchRepo();
     if (ws && ws.readyState === WebSocket.OPEN) {
       if (changed) ws.send('JOIN #' + channel);
       setStatus('connected');
