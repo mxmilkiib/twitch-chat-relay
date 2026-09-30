@@ -310,15 +310,13 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
       if (peer && event.source === peer.source && event.origin === peer.origin
           && auth && channel && ws && ws.readyState === WebSocket.OPEN
           && typeof d.text === 'string' && d.text.trim()) {
-        // a reply rides as the reply-parent-msg-id tag plus an @login
-        // prefix on the body; anything malformed just goes out as a
-        // plain message
+        // a reply rides as the reply-parent-msg-id tag; the embedder
+        // composes the body itself (@login prefix, /me CTCP wrap)
         const r = d.replyTo;
         const ok = r && /^[0-9a-f-]{8,64}$/i.test(r.id || '')
           && /^[a-z0-9_]{1,30}$/i.test(r.login || '');
         const tags = ok ? `@reply-parent-msg-id=${r.id} ` : '';
-        ws.send(tags + 'PRIVMSG #' + channel + ' :'
-          + (ok ? '@' + r.login + ' ' : '') + d.text.trim().slice(0, 500));
+        ws.send(tags + 'PRIVMSG #' + channel + ' :' + d.text.trim().slice(0, 500));
       }
       return;
     }
