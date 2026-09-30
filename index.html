@@ -295,11 +295,22 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
           .then((r) => (r.ok ? r.json() : null))
           .then((j) => {
             const t = j && j.tweet;
+            // photos plus video/gif thumbnails; media on a quoted tweet and
+            // external cards (youtube etc.) join the same lists
+            const med = (m) => ({
+              photos: ((m && m.photos) || []).map((p) => ({ url: p.url, alt: p.altText || '' })),
+              videos: ((m && m.videos) || []).map((v) => ({ url: v.url, thumb: v.thumbnail_url || '', type: v.type }))
+                .concat(m && m.external && m.external.thumbnail_url
+                  ? [{ url: m.external.url || '', thumb: m.external.thumbnail_url, type: 'video' }] : []),
+            });
+            const mm = med(t && t.media), qm = med(t && t.quote && t.quote.media);
             send({ type: 'tweet', id: d.id, tweet: t && t.text ? {
               text: t.text,
               author: { screen_name: t.author && t.author.screen_name },
-              media: { photos: ((t.media && t.media.photos) || []).slice(0, 4)
-                .map((p) => ({ url: p.url })) },
+              media: {
+                photos: [...mm.photos, ...qm.photos].slice(0, 4),
+                videos: [...mm.videos, ...qm.videos].slice(0, 4),
+              },
             } : null });
           })
           .catch(() => send({ type: 'tweet', id: d.id, tweet: null }));
