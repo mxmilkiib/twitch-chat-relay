@@ -286,6 +286,26 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
         setAuth(typeof d.token === 'string' && d.token ? d.token : null);
       return;
     }
+    // tweet previews: fxtwitter's public JSON API answers without an x
+    // login; only the fields the card needs cross the iframe boundary
+    if (d.type === 'tweet') {
+      if (peer && event.source === peer.source && event.origin === peer.origin
+          && /^\d{1,20}$/.test(d.id || '')) {
+        fetch(`https://api.fxtwitter.com/status/${d.id}`)
+          .then((r) => (r.ok ? r.json() : null))
+          .then((j) => {
+            const t = j && j.tweet;
+            send({ type: 'tweet', id: d.id, tweet: t && t.text ? {
+              text: t.text,
+              author: { screen_name: t.author && t.author.screen_name },
+              media: { photos: ((t.media && t.media.photos) || []).slice(0, 4)
+                .map((p) => ({ url: p.url })) },
+            } : null });
+          })
+          .catch(() => send({ type: 'tweet', id: d.id, tweet: null }));
+      }
+      return;
+    }
     if (d.type === 'send') {
       if (peer && event.source === peer.source && event.origin === peer.origin
           && auth && channel && ws && ws.readyState === WebSocket.OPEN
