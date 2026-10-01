@@ -133,7 +133,9 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
       twitchId ? get(`https://api.betterttv.net/3/cached/frankerfacez/users/twitch/${twitchId}`) : null,
       get(`https://api.streamelements.com/kappa/v2/chatstats/${channel}/stats`),
     ]);
-    const emoteSrc = {}, zeroWidth = [];
+    const emoteSrc = {}, zeroWidth = [], emoteAnim = {};
+    // each assignment flags the winning entry's animation state, so an
+    // override of the same name can't leave a stale flag behind
     const ffzUrl = (e) => {
       const u = e.urls && (e.urls['2'] || e.urls['1']);
       return !u ? null : u.startsWith('http') ? u : 'https:' + u;
@@ -141,23 +143,29 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
     const addFfz = (sets) => {
       for (const set of Object.values(sets || {}))
         for (const e of set.emoticons || [])
-          { const u = ffzUrl(e); if (u) { emotes[e.name] = u; emoteSrc[e.name] = 'FFZ'; } }
+          { const u = ffzUrl(e); if (u) { emotes[e.name] = u; emoteSrc[e.name] = 'FFZ'; emoteAnim[e.name] = !!e.animated; } }
     };
     const add7tv = (list) => {
       for (const e of list || []) {
         emotes[e.name] = `https://cdn.7tv.app/emote/${e.id}/2x.webp`;
         emoteSrc[e.name] = '7TV';
+        emoteAnim[e.name] = !!e.data?.animated;
         if (e.flags & 1) zeroWidth.push(e.name); // overlay emote, stacks on the previous one
+      }
+    };
+    const addBttv = (list) => {
+      for (const e of list || []) {
+        emotes[e.code] = `https://cdn.betterttv.net/emote/${e.id}/2x`;
+        emoteSrc[e.code] = 'BTTV';
+        emoteAnim[e.code] = !!(e.animated || e.imageType === 'gif');
       }
     };
     // globals first; channel sets override them
     add7tv(stvGlobal?.emotes);
-    for (const e of bttvGlobal || [])
-      { emotes[e.code] = `https://cdn.betterttv.net/emote/${e.id}/2x`; emoteSrc[e.code] = 'BTTV'; }
+    addBttv(bttvGlobal);
     addFfz(ffzGlobal?.sets);
     add7tv(stvUser?.emote_set?.emotes);
-    for (const e of [...(bttvUser?.channelEmotes || []), ...(bttvUser?.sharedEmotes || [])])
-      { emotes[e.code] = `https://cdn.betterttv.net/emote/${e.id}/2x`; emoteSrc[e.code] = 'BTTV'; }
+    addBttv([...(bttvUser?.channelEmotes || []), ...(bttvUser?.sharedEmotes || [])]);
     addFfz(ffzRoom?.sets);
     // animated FFZ emotes (FFZ:AP) come through BTTV's frankerfacez cache -
     // it mirrors the whole channel set, so keep only the flagged-animated
@@ -165,7 +173,7 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
     for (const e of ffzAnim || []) {
       if (!e.animated) continue;
       const u = e.images?.['2x'] || e.images?.['1x'];
-      if (u) { emotes[e.code] = u; emoteSrc[e.code] = 'FFZ animated'; }
+      if (u) { emotes[e.code] = u; emoteSrc[e.code] = 'FFZ animated'; emoteAnim[e.code] = true; }
     }
     // badge set 'set_id' -> { version: url }; channel sets override globals
     const badges = {};
@@ -186,10 +194,12 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
       end: new Date(Date.parse(vod.createdAt) + vod.lengthSeconds * 1000).toISOString() } : null;
     // skip re-sending an identical payload to the same peer: the page would
     // re-walk every chat row for nothing. a fresh join() makes a new peer.
-    const json = JSON.stringify([emotes, emoteSrc, zeroWidth, badges, lastBroadcast, lastVod, emoteUse]);
+    // the picker only needs the animated names, not a full bool map
+    const anims = Object.keys(emoteAnim).filter((n) => emoteAnim[n]);
+    const json = JSON.stringify([emotes, emoteSrc, zeroWidth, badges, lastBroadcast, lastVod, emoteUse, anims]);
     if (json === lastEmoteJson && peer === lastEmotePeer) return;
     lastEmoteJson = json; lastEmotePeer = peer;
-    send({ type: 'emotes', emotes, emoteSrc, zeroWidth, badges, lastBroadcast, lastVod, emoteUse });
+    send({ type: 'emotes', emotes, emoteSrc, zeroWidth, badges, lastBroadcast, lastVod, emoteUse, emoteAnim: anims });
   }
 
   // ---- user auth: the embedder hands over an implicit-grant token; ----
