@@ -159,8 +159,11 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
     for (const e of [...(bttvUser?.channelEmotes || []), ...(bttvUser?.sharedEmotes || [])])
       { emotes[e.code] = `https://cdn.betterttv.net/emote/${e.id}/2x`; emoteSrc[e.code] = 'BTTV'; }
     addFfz(ffzRoom?.sets);
-    // animated FFZ emotes (FFZ:AP) come through BTTV's frankerfacez cache
+    // animated FFZ emotes (FFZ:AP) come through BTTV's frankerfacez cache -
+    // it mirrors the whole channel set, so keep only the flagged-animated
+    // entries; the rest are static duplicates of the FFZ list
     for (const e of ffzAnim || []) {
+      if (!e.animated) continue;
       const u = e.images?.['2x'] || e.images?.['1x'];
       if (u) { emotes[e.code] = u; emoteSrc[e.code] = 'FFZ animated'; }
     }
