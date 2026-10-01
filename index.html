@@ -65,12 +65,13 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
       send({ type: 'lines', lines });
     };
 
-    ws.onclose = scheduleReconnect;
+    ws.onclose = (e) => scheduleReconnect(e.code, e.reason || '');
     ws.onerror = () => ws.close();
   }
 
-  function scheduleReconnect() {
+  function scheduleReconnect(code, reason) {
     setStatus('reconnecting');
+    send({ type: 'wscause', code: code || 0, reason });
     const delay = Math.min(1000 * 2 ** reconnectAttempt, 30000);
     reconnectAttempt++;
     setTimeout(connect, delay);
