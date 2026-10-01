@@ -120,7 +120,7 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
         `{ user(login: "${channel.replace(/[^a-zA-Z0-9_]/g, '')}") { videos(first: 1, type: ARCHIVE, sort: TIME) { edges { node { createdAt lengthSeconds } } } } }` }),
     }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
     const [stvUser, stvGlobal, bttvUser, bttvGlobal, ffzRoom, ffzGlobal, vodResp,
-           badgesGlobal, badgesChan, ffzAnim] = await Promise.all([
+           badgesGlobal, badgesChan, ffzAnim, chatStats] = await Promise.all([
       twitchId ? get(`https://7tv.io/v3/users/twitch/${twitchId}`) : null,
       get('https://7tv.io/v3/emote-sets/global'),
       twitchId ? get(`https://api.betterttv.net/3/cached/users/twitch/${twitchId}`) : null,
@@ -131,6 +131,7 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
       get('https://api.ivr.fi/v2/twitch/badges/global'),
       twitchId ? get(`https://api.ivr.fi/v2/twitch/badges/channel?id=${twitchId}`) : null,
       twitchId ? get(`https://api.betterttv.net/3/cached/frankerfacez/users/twitch/${twitchId}`) : null,
+      get(`https://api.streamelements.com/kappa/v2/chatstats/${channel}/stats`),
     ]);
     const emoteSrc = {}, zeroWidth = [];
     const ffzUrl = (e) => {
@@ -169,16 +170,23 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
       badges[s.set_id] = { ...(badges[s.set_id] || {}),
         ...Object.fromEntries((s.versions || [])
           .map((v) => [v.id, v.image_url_2x || v.image_url_1x])) };
+    // per-emote usage counts from StreamElements' channel stats - the picker
+    // sorts sections by how much each emote actually gets used in chat
+    const emoteUse = {};
+    for (const list of [chatStats?.bttvEmotes, chatStats?.ffzEmotes,
+                        chatStats?.twitchEmotes, chatStats?.sevenTVEmotes])
+      for (const e of list || [])
+        if (e.emote) emoteUse[e.emote] = (emoteUse[e.emote] || 0) + (e.amount || 0);
     const lastBroadcast = (Array.isArray(user) ? user[0] : user)?.lastBroadcast || null;
     const vod = vodResp?.data?.user?.videos?.edges?.[0]?.node;
     const lastVod = vod ? { start: vod.createdAt,
       end: new Date(Date.parse(vod.createdAt) + vod.lengthSeconds * 1000).toISOString() } : null;
     // skip re-sending an identical payload to the same peer: the page would
     // re-walk every chat row for nothing. a fresh join() makes a new peer.
-    const json = JSON.stringify([emotes, emoteSrc, zeroWidth, badges, lastBroadcast, lastVod]);
+    const json = JSON.stringify([emotes, emoteSrc, zeroWidth, badges, lastBroadcast, lastVod, emoteUse]);
     if (json === lastEmoteJson && peer === lastEmotePeer) return;
     lastEmoteJson = json; lastEmotePeer = peer;
-    send({ type: 'emotes', emotes, emoteSrc, zeroWidth, badges, lastBroadcast, lastVod });
+    send({ type: 'emotes', emotes, emoteSrc, zeroWidth, badges, lastBroadcast, lastVod, emoteUse });
   }
 
   // ---- user auth: the embedder hands over an implicit-grant token; ----

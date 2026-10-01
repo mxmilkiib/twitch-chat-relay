@@ -53,11 +53,13 @@ Relay → parent:
 - `{type: 'stream', uptime, viewers, title}` — from
   [DecAPI](https://decapi.me), polled every 60s
 - `{type: 'emotes', emotes, emoteSrc, zeroWidth, badges, lastBroadcast,
-  lastVod}` — name → CDN URL map merged from 7TV, BTTV, FFZ and animated
-  FFZ (globals + channel sets), per-emote source labels, 7TV zero-width
-  names, badge `set → version → image` maps from
-  [ivr.fi](https://api.ivr.fi), plus stream history: `lastBroadcast` and
-  the latest VOD's start/end from Twitch's public GraphQL endpoint
+  lastVod, emoteUse}` — name → CDN URL map merged from 7TV, BTTV, FFZ and
+  animated FFZ (globals + channel sets), per-emote source labels, 7TV
+  zero-width names, badge `set → version → image` maps from
+  [ivr.fi](https://api.ivr.fi), per-emote channel usage counts from
+  [StreamElements chatstats](https://api.streamelements.com/kappa/v2/chatstats/),
+  plus stream history: `lastBroadcast` and the latest VOD's start/end
+  from Twitch's public GraphQL endpoint
 - `{type: 'nitter', host}` — fastest healthy nitter instance scraped
   from [status.d420.de](https://status.d420.de/), rechecked every 15 min
 - `{type: 'auth', login, scopes}` or `{type: 'auth', error}` — result of
