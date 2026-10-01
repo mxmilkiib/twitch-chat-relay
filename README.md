@@ -28,7 +28,8 @@ iframe.contentWindow.postMessage({ type: 'join', channel: 'somechannel' },
 
 Parent → relay: `{type: 'join', channel}`, `{type: 'backfill'}` —
 backfill fetches the recent backlog from recent-messages.robotty.de and
-returns it as `lines` for the embedder to dedup
+returns it as `lines` for the embedder to dedup — and `{type: 'tweet',
+id}` for a link preview.
 
 Optional authenticated mode:
 
@@ -38,8 +39,9 @@ Optional authenticated mode:
   reconnects the socket with `PASS oauth:`/`NICK <login>` instead of the
   anonymous justinfan account. `token: null` logs out and drops back to
   anonymous.
-- `{type: 'send', text}` — once authenticated, sends
-  `PRIVMSG #<channel> :<text>` on the same socket. Twitch replies with a
+- `{type: 'send', text, replyTo}` — once authenticated, sends
+  `PRIVMSG #<channel> :<text>` on the same socket; `replyTo` (`{id,
+  login}`) attaches a `reply-parent-msg-id` tag. Twitch replies with a
   `NOTICE` line on rejections (slow mode, followers-only, etc.), which
   flows through `lines` like everything else.
 
@@ -60,6 +62,13 @@ Relay → parent:
   from [status.d420.de](https://status.d420.de/), rechecked every 15 min
 - `{type: 'auth', login, scopes}` or `{type: 'auth', error}` — result of
   an `auth` request (see above)
+- `{type: 'wscause', code, reason}` — why the Twitch socket last closed,
+  sent alongside each `reconnecting` status
+- `{type: 'tweet', id, tweet}` — preview data (text, author, photo and
+  video thumbnails, quoted-tweet media) for a status id the embedder
+  requested with `{type: 'tweet', id}`, fetched from api.fxtwitter.com
+- `{type: 'repo', stars, created, pushed}` — GitHub metadata for the
+  embedder's repo, for its help panel
 
 The relay holds the token only in memory — it isn't stored or forwarded
 anywhere except the Twitch socket. (The embedder may persist it locally;
