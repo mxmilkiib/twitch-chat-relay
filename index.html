@@ -6,12 +6,13 @@
 </head>
 <body>
 <p>Twitch chat relay. Embed this page in an iframe and postMessage
-<code>{type: 'join', channel: 'somechannel'}</code> to it; it replies with
-<code>{type: 'status', state}</code> and <code>{type: 'lines', lines}</code>
+<code>{type: 'join', channels: ['somechannel', ...]}</code> to it; it replies
+with <code>{type: 'status', state}</code> and <code>{type: 'lines', lines}</code>
 messages containing raw Twitch IRC lines, plus periodic
-<code>{type: 'stream', uptime, viewers, title}</code> status from decapi.
+<code>{type: 'stream', channel, uptime, viewers, title}</code> status from
+decapi and <code>{type: 'emotes', channel, ...}</code> sets per channel.
 <code>{type: 'auth', token}</code> logs the socket in as that user, after
-which <code>{type: 'send', text}</code> posts to the joined channel;
+which <code>{type: 'send', channel, text}</code> posts to a joined channel;
 the relay replies <code>{type: 'auth', login}</code> or an error.</p>
 <script>
 // Anonymous read-only IRC-over-WebSocket relay for hosts whose CSP forbids
@@ -20,7 +21,8 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
 (() => {
   const WS_URL = 'wss://irc-ws.chat.twitch.tv:443';
   let ws;
-  let channel = null;
+  const channels = new Set(); // joined channels; every message tags its own
+  const MAX_CHANNELS = 6;
   let reconnectAttempt = 0;
   let peer = null; // { source, origin } of the embedding page
   let auth = null; // { token, login } - user creds replace the anon nick
@@ -46,7 +48,7 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
         ws.send('PASS justinfan');
         ws.send('NICK justinfan' + Math.floor(Math.random() * 99999));
       }
-      if (channel) ws.send('JOIN #' + channel);
+      for (const ch of channels) ws.send('JOIN #' + ch);
     };
 
     ws.onmessage = (evt) => {
@@ -82,20 +84,23 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
   let pollTimer = null;
 
   async function pollStream() {
-    if (!peer || !channel) return;
-    try {
-      const [uptime, viewers, title] = await Promise.all([
-        fetch(`https://decapi.me/twitch/uptime/${channel}`).then((r) => r.text()),
-        fetch(`https://decapi.me/twitch/viewercount/${channel}`).then((r) => r.text()),
-        fetch(`https://decapi.me/twitch/title/${channel}`).then((r) => r.text()),
-      ]);
-      send({
-        type: 'stream',
-        uptime: uptime.trim(),
-        viewers: viewers.trim(),
-        title: title.trim(),
-      });
-    } catch (e) { /* keep last state on transient failure */ }
+    if (!peer || !channels.size) return;
+    for (const channel of channels) {
+      try {
+        const [uptime, viewers, title] = await Promise.all([
+          fetch(`https://decapi.me/twitch/uptime/${channel}`).then((r) => r.text()),
+          fetch(`https://decapi.me/twitch/viewercount/${channel}`).then((r) => r.text()),
+          fetch(`https://decapi.me/twitch/title/${channel}`).then((r) => r.text()),
+        ]);
+        send({
+          type: 'stream',
+          channel,
+          uptime: uptime.trim(),
+          viewers: viewers.trim(),
+          title: title.trim(),
+        });
+      } catch (e) { /* keep last state on transient failure */ }
+    }
   }
 
   // ---- third-party emote sets (7TV/BTTV/FFZ), refetched every 10 min ----
@@ -103,12 +108,26 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
   // resolves the sets here and forwards a plain name -> CDN url map.
   const EMOTE_POLL_MS = 10 * 60 * 1000;
   let emoteTimer = null;
-  let lastEmoteJson = null, lastEmotePeer = null;
+  const lastEmoteJson = new Map(); // channel -> last payload sent for it
 
   async function fetchEmotes() {
-    if (!peer || !channel) return;
+    if (!peer || !channels.size) return;
     const get = (u) => fetch(u).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    // globals are channel-independent: fetch them once per cycle, not per
+    // channel, then each channel's own sets override them
+    const [stvGlobal, bttvGlobal, ffzGlobal, badgesGlobal] = await Promise.all([
+      get('https://7tv.io/v3/emote-sets/global'),
+      get('https://api.betterttv.net/3/cached/emotes/global'),
+      get('https://api.frankerfacez.com/v1/set/global'),
+      get('https://api.ivr.fi/v2/twitch/badges/global'),
+    ]);
+    for (const channel of channels) await fetchEmotesFor(channel, get,
+      { stvGlobal, bttvGlobal, ffzGlobal, badgesGlobal });
+  }
+
+  async function fetchEmotesFor(channel, get, globs) {
     const emotes = {};
+    const { stvGlobal, bttvGlobal, ffzGlobal, badgesGlobal } = globs;
     const user = await get(`https://api.ivr.fi/v2/twitch/user?login=${channel}`);
     const twitchId = (Array.isArray(user) ? user[0] : user)?.id;
     // Latest VOD via Twitch's public GraphQL client-id: gives the real
@@ -119,16 +138,12 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
       body: JSON.stringify({ query:
         `{ user(login: "${channel.replace(/[^a-zA-Z0-9_]/g, '')}") { videos(first: 1, type: ARCHIVE, sort: TIME) { edges { node { createdAt lengthSeconds } } } } }` }),
     }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
-    const [stvUser, stvGlobal, bttvUser, bttvGlobal, ffzRoom, ffzGlobal, vodResp,
-           badgesGlobal, badgesChan, ffzAnim, chatStats] = await Promise.all([
+    const [stvUser, bttvUser, ffzRoom, vodResp,
+           badgesChan, ffzAnim, chatStats] = await Promise.all([
       twitchId ? get(`https://7tv.io/v3/users/twitch/${twitchId}`) : null,
-      get('https://7tv.io/v3/emote-sets/global'),
       twitchId ? get(`https://api.betterttv.net/3/cached/users/twitch/${twitchId}`) : null,
-      get('https://api.betterttv.net/3/cached/emotes/global'),
       get(`https://api.frankerfacez.com/v1/room/${channel}`),
-      get('https://api.frankerfacez.com/v1/set/global'),
       vodGql,
-      get('https://api.ivr.fi/v2/twitch/badges/global'),
       twitchId ? get(`https://api.ivr.fi/v2/twitch/badges/channel?id=${twitchId}`) : null,
       twitchId ? get(`https://api.betterttv.net/3/cached/frankerfacez/users/twitch/${twitchId}`) : null,
       get(`https://api.streamelements.com/kappa/v2/chatstats/${channel}/stats`),
@@ -197,9 +212,9 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
     // the picker only needs the animated names, not a full bool map
     const anims = Object.keys(emoteAnim).filter((n) => emoteAnim[n]);
     const json = JSON.stringify([emotes, emoteSrc, zeroWidth, badges, lastBroadcast, lastVod, emoteUse, anims]);
-    if (json === lastEmoteJson && peer === lastEmotePeer) return;
-    lastEmoteJson = json; lastEmotePeer = peer;
-    send({ type: 'emotes', emotes, emoteSrc, zeroWidth, badges, lastBroadcast, lastVod, emoteUse, emoteAnim: anims });
+    if (json === lastEmoteJson.get(channel)) return;
+    lastEmoteJson.set(channel, json);
+    send({ type: 'emotes', channel, emotes, emoteSrc, zeroWidth, badges, lastBroadcast, lastVod, emoteUse, emoteAnim: anims });
   }
 
   // ---- user auth: the embedder hands over an implicit-grant token; ----
@@ -282,18 +297,23 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
   // rendered rows by msg id. Debounced since robotty is a shared service.
   let lastBackfill = 0;
   async function backfill() {
-    if (!peer || !channel || Date.now() - lastBackfill < 5000) return;
+    if (!peer || !channels.size || Date.now() - lastBackfill < 5000) return;
     lastBackfill = Date.now();
-    try {
-      const j = await fetch(`https://recent-messages.robotty.de/api/v2/recent-messages/${channel}?limit=200`)
-        .then((r) => (r.ok ? r.json() : null));
-      const lines = (j && Array.isArray(j.messages) ? j.messages : [])
-        .filter((l) => typeof l === 'string');
-      // sort oldest-first so replays append in chat order
-      const ts = (l) => +(/tmi-sent-ts=(\d+)/.exec(l) || [])[1] || 0;
-      lines.sort((a, b) => ts(a) - ts(b));
-      if (lines.length) send({ type: 'lines', lines, replay: true });
-    } catch (e) { /* backlog is best-effort */ }
+    // every joined channel gets its own snapshot; all lines merge and sort
+    // by tmi-sent-ts before going up, so the embedder appends them in
+    // chat order rather than channel-by-channel blocks
+    const lines = [];
+    for (const channel of channels) {
+      try {
+        const j = await fetch(`https://recent-messages.robotty.de/api/v2/recent-messages/${channel}?limit=200`)
+          .then((r) => (r.ok ? r.json() : null));
+        for (const l of (j && Array.isArray(j.messages) ? j.messages : []))
+          if (typeof l === 'string') lines.push(l);
+      } catch (e) { /* backlog is best-effort */ }
+    }
+    const ts = (l) => +(/tmi-sent-ts=(\d+)/.exec(l) || [])[1] || 0;
+    lines.sort((a, b) => ts(a) - ts(b));
+    if (lines.length) send({ type: 'lines', lines, replay: true });
   }
 
   window.addEventListener('message', (event) => {
@@ -358,7 +378,7 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
     }
     if (d.type === 'send') {
       if (peer && event.source === peer.source && event.origin === peer.origin
-          && auth && channel && ws && ws.readyState === WebSocket.OPEN
+          && auth && channels.has(d.channel) && ws && ws.readyState === WebSocket.OPEN
           && typeof d.text === 'string' && d.text.trim()) {
         // a reply rides as the reply-parent-msg-id tag; the embedder
         // composes the body itself (@login prefix, /me CTCP wrap)
@@ -366,17 +386,29 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
         const ok = r && /^[0-9a-f-]{8,64}$/i.test(r.id || '')
           && /^[a-z0-9_]{1,30}$/i.test(r.login || '');
         const tags = ok ? `@reply-parent-msg-id=${r.id} ` : '';
-        ws.send(tags + 'PRIVMSG #' + channel + ' :' + d.text.trim().slice(0, 500));
+        ws.send(tags + 'PRIVMSG #' + d.channel + ' :' + d.text.trim().slice(0, 500));
       }
       return;
     }
-    if (d.type !== 'join' || typeof d.channel !== 'string') return;
+    if (d.type !== 'join' || typeof d.channel !== 'string' && !Array.isArray(d.channels)) return;
     if (!/^https?:/.test(event.origin)) return;
+    // a fresh embedder must re-hear every channel's emote payload and the
+    // nitter pick - dedupe state only applies within one peer's session
+    if (!peer || peer.source !== event.source || peer.origin !== event.origin) {
+      lastEmoteJson.clear();
+      lastNitter = undefined;
+    }
     peer = { source: event.source, origin: event.origin };
-    const ch = d.channel.toLowerCase().replace(/[^a-z0-9_]/g, '');
-    if (!ch) return;
-    const changed = ch !== channel;
-    channel = ch;
+    // 'channels' list preferred; a bare 'channel' string stays supported.
+    // join the additions, part the removals - a repeat join diffs the sets
+    const want = new Set((Array.isArray(d.channels) ? d.channels : [d.channel])
+      .map((c) => String(c || '').toLowerCase().replace(/[^a-z0-9_]/g, ''))
+      .filter(Boolean).slice(0, MAX_CHANNELS));
+    if (!want.size) return;
+    const open = ws && ws.readyState === WebSocket.OPEN;
+    for (const ch of channels) if (!want.has(ch)) { if (open) ws.send('PART #' + ch); channels.delete(ch); lastEmoteJson.delete(ch); }
+    const added = [...want].filter((ch) => !channels.has(ch));
+    for (const ch of added) channels.add(ch);
     if (!pollTimer) pollTimer = setInterval(pollStream, POLL_MS);
     if (!emoteTimer) emoteTimer = setInterval(fetchEmotes, EMOTE_POLL_MS);
     if (!nitterTimer) nitterTimer = setInterval(fetchNitterHost, NITTER_POLL_MS);
@@ -384,8 +416,8 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
     fetchEmotes();
     fetchNitterHost();
     fetchRepo();
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      if (changed) ws.send('JOIN #' + channel);
+    if (open) {
+      for (const ch of added) ws.send('JOIN #' + ch);
       setStatus('connected');
     } else if (!ws || ws.readyState === WebSocket.CLOSED) {
       connect();
