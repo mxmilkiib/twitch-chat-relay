@@ -339,6 +339,23 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
       }
       return;
     }
+    // twitch emote sets: the embedder's CSP blocks direct api calls, so
+    // ivr.fi lookups go through here like the tweet previews; ivr caps at
+    // 100 set ids per call
+    if (d.type === 'twsets') {
+      if (peer && event.source === peer.source && event.origin === peer.origin
+          && /^[\d,]{1,2000}$/.test(d.ids || '')) {
+        const ids = [...new Set(d.ids.split(',').filter(Boolean))].slice(0, 300);
+        const chunks = [];
+        for (let i = 0; i < ids.length; i += 100) chunks.push(ids.slice(i, i + 100));
+        Promise.all(chunks.map((c) =>
+          fetch(`https://api.ivr.fi/v2/twitch/emotes/sets?set_id=${c.join(',')}`)
+            .then((r) => (r.ok ? r.json() : [])).catch(() => [])))
+          .then((res) => send({ type: 'twsets', key: d.ids,
+            sets: res.flat().filter((s) => s && s.emoteList && s.emoteList.length) }));
+      }
+      return;
+    }
     if (d.type === 'send') {
       if (peer && event.source === peer.source && event.origin === peer.origin
           && auth && channel && ws && ws.readyState === WebSocket.OPEN
