@@ -344,8 +344,8 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
     // 100 set ids per call
     if (d.type === 'twsets') {
       if (peer && event.source === peer.source && event.origin === peer.origin
-          && /^[\d,]{1,2000}$/.test(d.ids || '')) {
-        const ids = [...new Set(d.ids.split(',').filter(Boolean))].slice(0, 300);
+          && /^[\d,]{1,40000}$/.test(d.ids || '')) {
+        const ids = [...new Set(d.ids.split(',').filter(Boolean))].slice(0, 2000);
         const chunks = [];
         for (let i = 0; i < ids.length; i += 100) chunks.push(ids.slice(i, i + 100));
         Promise.all(chunks.map((c) =>
