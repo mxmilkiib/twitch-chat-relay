@@ -359,6 +359,24 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
       }
       return;
     }
+    // native gif posts carry only the giphy title: search for the best
+    // match. Giphy API keys are public by design (they identify the app for
+    // rate limiting), so this one sits in the page source
+    if (d.type === 'giphy') {
+      if (peer && event.source === peer.source && event.origin === peer.origin
+          && typeof d.q === 'string' && d.q.length > 0 && d.q.length <= 120) {
+        fetch(`https://api.giphy.com/v1/gifs/search?api_key=QHi4vLaXUrzGCBFLNdkeEiu2bl7MKVHs&limit=1${d.safe === true ? '&rating=pg-13' : ''}&q=${encodeURIComponent(d.q)}`)
+          .then((r) => (r.status === 429 ? { limited: true } : r.ok ? r.json() : null))
+          .then((j) => {
+            if (j && j.limited) return send({ type: 'giphy', q: d.q, limited: true });
+            const g = j && j.data && j.data[0];
+            const im = g && g.images && (g.images.fixed_height || g.images.original);
+            send({ type: 'giphy', q: d.q, url: im ? im.url : null, page: g ? g.url : null });
+          })
+          .catch(() => send({ type: 'giphy', q: d.q, url: null, page: null }));
+      }
+      return;
+    }
     // twitch emote sets: the embedder's CSP blocks direct api calls, so
     // ivr.fi lookups go through here like the tweet previews; ivr caps at
     // 100 set ids per call
