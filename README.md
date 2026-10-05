@@ -93,8 +93,9 @@ on this page it lives in localStorage until logout.)
 this repo). It answers only the relay and embedder origins listed in
 `ALLOWED`, vets every redirect hop, reads each page up to the end of
 `<head>` (further, to 128 KB, when the head has no og:title or JSON-LD),
-and has dedicated lookups for YouTube, GitHub, Wikipedia and Twitch
-channel links. For other pages it merges og/twitter tags, schema.org
+and has dedicated lookups for YouTube, GitHub, Wikipedia, Hacker News
+items (via the official firebase api - HN itself refuses datacentre
+fetches) and Twitch channel links. For other pages it merges og/twitter tags, schema.org
 JSON-LD, `<title>`/description, the page's advertised oEmbed endpoint,
 its icon and theme-color, and any author and publish date. Hits cache
 for a day.

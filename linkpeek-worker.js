@@ -79,6 +79,21 @@ const PROVIDERS = [
     const j = await getJson(`https://${m[1]}.wikipedia.org/api/rest_v1/page/summary/${t[1]}`);
     return j && j.title ? { title: j.title, description: j.extract, site: 'Wikipedia', image: j.thumbnail && j.thumbnail.source } : null;
   }],
+  // HN refuses datacentre fetches; the official firebase api stays open
+  [/^news\.ycombinator\.com$/, async (u) => {
+    const id = u.searchParams.get('id');
+    if (u.pathname !== '/item' || !/^\d+$/.test(id || '')) return null;
+    const j = await getJson(`https://hacker-news.firebaseio.com/v0/item/${id}.json`);
+    if (!j || !j.title) return null;
+    let host = '';
+    try { host = j.url ? new URL(j.url).hostname.replace(/^www\./, '') : ''; } catch { /* no linked article */ }
+    return {
+      title: j.title, site: 'Hacker News', author: j.by,
+      description: [`${j.score ?? 0} points`, j.descendants != null ? `${j.descendants} comments` : '', host].filter(Boolean).join(' · '),
+      published: j.time ? new Date(j.time * 1000).toISOString() : '',
+      icon: 'https://news.ycombinator.com/y18.svg',
+    };
+  }],
   [/^(?:www\.)?twitch\.tv$/, async (u) => {
     const login = (u.pathname.match(/^\/([a-z0-9_]{2,25})\/?$/i) || [])[1];
     if (!login || /^(directory|videos|settings|downloads|jobs|turbo|store|p)$/i.test(login)) return null;
