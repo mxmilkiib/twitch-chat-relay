@@ -4,9 +4,11 @@
 //   url = final address after redirects
 // Sources, best first: og:/twitter: tags, schema.org JSON-LD, then <title>
 // and meta description; the page's own oEmbed endpoint fills any gap left
-// in image, site, author or title.
+// in image, site, author or title. A non-html target still answers with
+// its filename, content type and size, never its body.
 // Callers are the chat relay iframe (github.io) and the page itself; both
-// send an Origin header, which is required and checked against ALLOWED.
+// send an Origin header, which is required and checked against ALLOWED,
+// and each ip gets 30 uncached lookups a minute per isolate.
 // Hits cache for a day, misses for a minute. Only metadata ever leaves -
 // a page is read up to the end of <head> (further, up to MAX_READ, only when
 // the head carries no og:title or JSON-LD) and the rest is discarded.
@@ -237,7 +239,21 @@ async function peek(first) {
   const got = await fetchPage(first);
   if (!got) return null;
   const { res, url } = got;
-  if (!res.ok || !/text\/html|xhtml/i.test(res.headers.get('content-type') || '')) return null;
+  const ctype = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+  // a non-html target still gets a card: its filename, type and size
+  if (res.ok && ctype && !/^text\/html|application\/xhtml/.test(ctype)) {
+    res.body && res.body.cancel().catch(() => {});
+    const label = {
+      'application/pdf': 'PDF', 'application/zip': 'zip archive', 'application/gzip': 'gzip archive',
+      'application/json': 'JSON', 'text/plain': 'plain text', 'text/markdown': 'markdown', 'text/csv': 'csv',
+    }[ctype] || (ctype.startsWith('image/') ? 'image' : ctype.startsWith('video/') ? 'video'
+      : ctype.startsWith('audio/') ? 'audio' : ctype);
+    const len = +res.headers.get('content-length') || 0;
+    const size = len ? ` · ${len >= 1e6 ? (len / 1e6).toFixed(1) + ' MB' : Math.max(1, Math.round(len / 1e3)) + ' KB'}` : '';
+    const name = decodeURIComponent(url.pathname.split('/').filter(Boolean).pop() || url.hostname);
+    return { title: name, description: label + size, site: url.hostname, url: url.href };
+  }
+  if (!res.ok || !/^text\/html|application\/xhtml/.test(ctype)) return null;
   const meta = {};
   const lds = [];
   const head = await readText(res, MAX_READ, headStop()).catch(() => '');
@@ -272,6 +288,19 @@ async function peek(first) {
   return { ...meta, url: url.href };
 }
 
+// best-effort per-ip throttle: isolate-local, so it only damps casual
+// abuse - a real waf rule needs a custom domain, which workers.dev can't
+// hold. counted after the cache check so hits stay free
+const ipHits = new Map(); // ip -> { t: window start, n: count }
+function ipOk(ip) {
+  if (!ip) return true;
+  const now = Date.now();
+  let e = ipHits.get(ip);
+  if (!e || now - e.t > 6e4) { e = { t: now, n: 0 }; ipHits.set(ip, e); }
+  if (ipHits.size > 5000) ipHits.clear();
+  return ++e.n <= 30;
+}
+
 export default {
   async fetch(request, env, ctx) {
     const origin = request.headers.get('Origin') || '';
@@ -293,6 +322,8 @@ export default {
     if (hit) return new Response(hit.body, { status: hit.status, headers: {
       ...corsFor(origin), 'Content-Type': 'application/json', 'Cache-Control': hit.headers.get('Cache-Control') || '' } });
 
+    if (!ipOk(request.headers.get('CF-Connecting-IP')))
+      return reply({ error: 'rate limited' }, origin, 429, TTL_FAIL);
     let found = null;
     try { found = await peek(target); } catch { found = null; }
     // relative and http: addresses resolve against the page; only https survives
@@ -304,7 +335,7 @@ export default {
     const desc = found && (found.ogDesc || found.ldDesc || found.desc || found.description);
     const body = found && (title || desc) ? {
       title: clean(title, 200) || null,
-      description: clean(desc, 300) || null,
+      description: clean(desc, 480) || null,
       site: clean(found.site, 80) || target.hostname,
       image: abs(found.image),
       icon: abs(found.icon || found.touch),
