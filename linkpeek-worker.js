@@ -1,7 +1,8 @@
 // Link preview worker for hasanabi.neocities.org (Cloudflare Workers).
 // GET /?url=<page> returns trimmed metadata as JSON:
 //   { title, description, site, image, icon, color, author, published,
-//     views, facts, ttl, url }
+//     views, facts, video, ttl, url }
+//   video = a directly playable mp4 (provider-resolved, eg reels)
 //   url = final address after redirects
 //   facts = provider-supplied fact chips (eg twitch live/followers/modes)
 //   ttl   = seconds the provider wants this cached (volatile previews)
@@ -80,7 +81,9 @@ function safeTarget(u) {
   return !/(^|\.)(localhost|local|internal|lan|home|corp|invalid|test|example)$/.test(h);
 }
 
-// per-site providers: each returns { title, description, site, image } or null
+// per-site providers: each returns { title, description, site, image } or null.
+// a { partial: true, ... } result doesn't short-circuit the scrape - its
+// fields merge over the page's own metadata (eg a resolved media file)
 const getJson = (url, init) => fetch(url, { headers: { 'User-Agent': UA, Accept: 'application/json' }, signal: AbortSignal.timeout(4000), ...init })
   .then((r) => (r.ok ? r.json() : null)).catch(() => null);
 
@@ -178,6 +181,29 @@ const PROVIDERS = [
       site: 'Twitch', image: user.logo, color: user.chatColor,
       facts, ttl: st ? 300 : 0,
     };
+  }],
+  // instagram's own page carries og:title/poster/caption; the playable
+  // file is fetched through kkclip (kkscript), which 302s a bot ua to
+  // the signed cdn mp4. the provider only adds video + a short ttl (the
+  // signature rots in ~a day) - a kkclip outage loses just the playback
+  [/^(?:www\.)?instagram\.com$/, async (u) => {
+    const id = (u.pathname.match(/^\/(?:reels?|p|tv)\/([\w-]{5,20})/i) || [])[1];
+    if (!id) return null;
+    const res = await fetch(`https://www.kkclip.com/reel/${id}/`, {
+      redirect: 'manual', signal: AbortSignal.timeout(5000),
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)' },
+    }).catch(() => null);
+    if (!res) return { partial: true };
+    res.body && res.body.cancel().catch(() => {});
+    let video = null;
+    const loc = res.headers.get('location') || '';
+    if (res.status >= 300 && res.status < 400) {
+      try {
+        const v = new URL(loc);
+        if (v.protocol === 'https:' && /(^|\.)cdninstagram\.com$/.test(v.hostname)) video = v.href;
+      } catch { /* not a media redirect */ }
+    }
+    return { partial: true, video, ttl: video ? 21600 : 0 };
   }],
 ];
 
@@ -306,14 +332,17 @@ function headStop() {
 }
 
 async function peek(first) {
+  let extra = null;
   for (const [host, fn] of PROVIDERS) {
     const m = first.hostname.toLowerCase().match(host);
     if (!m) continue;
     const r = await fn(first, m).catch(() => null);
+    if (r && r.partial) { extra = r; break; }
     if (r) return { ...r, url: first.href };
   }
   const got = await fetchPage(first);
-  if (!got) return null;
+  if (!got) return extra && extra.video
+    ? { video: extra.video, ttl: extra.ttl, url: first.href } : null;
   const { res, url } = got;
   const ctype = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
   // a non-html target still gets a card: its filename, type and size
@@ -361,6 +390,8 @@ async function peek(first) {
       meta.author ||= ldStr(oe.author_name);
     }
   }
+  // a partial provider's resolved fields ride on top of the scraped meta
+  if (extra) { if (extra.video) meta.video = extra.video; if (extra.ttl) meta.ttl = extra.ttl; }
   return { ...meta, url: url.href };
 }
 
@@ -403,13 +434,13 @@ export default {
     let found = null;
     try { found = await peek(target); } catch { found = null; }
     // relative and http: addresses resolve against the page; only https survives
-    const abs = (v) => {
+    const abs = (v, max = 1000) => {
       if (!v) return null;
-      try { const i = new URL(clean(v, 1000), found.url); return i.protocol === 'https:' ? i.href : null; } catch { return null; }
+      try { const i = new URL(clean(v, max), found.url); return i.protocol === 'https:' ? i.href : null; } catch { return null; }
     };
     const title = found && (found.title || found.ldTitle || found.rawTitle);
     const desc = found && (found.ogDesc || found.ldDesc || found.desc || found.description);
-    const body = found && (title || desc) ? {
+    const body = found && (title || desc || found.video) ? {
       title: clean(title, 200) || null,
       description: clean(desc, 480) || null,
       site: clean(found.site, 80) || target.hostname,
@@ -424,6 +455,7 @@ export default {
       // providers flag volatile previews (eg a live stream) with a
       // shorter ttl - echoed so the client cache honours it too
       ttl: found.ttl > 0 ? Math.min(found.ttl, TTL_OK) : null,
+      video: abs(found.video, 2048),
       url: found.url,
     } : { error: 'no preview', url: found ? found.url : target.href };
     const out = reply(body, origin, 200, body.error ? TTL_FAIL : (body.ttl || TTL_OK));

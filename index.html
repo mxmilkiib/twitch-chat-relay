@@ -389,6 +389,7 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
               facts: Array.isArray(j.facts)
                 ? j.facts.filter((f) => typeof f === 'string').slice(0, 8).map((f) => f.slice(0, 80)) : [],
               ttl: typeof j.ttl === 'number' && j.ttl > 0 ? Math.min(j.ttl, 86400) : 0,
+              video: typeof j.video === 'string' && /^https:\/\//.test(j.video) ? j.video : '',
               url: typeof j.url === 'string' && /^https?:\/\//.test(j.url) ? j.url : '',
             } : null });
           })

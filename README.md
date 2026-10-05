@@ -74,7 +74,10 @@ Relay → parent:
   requested with `{type: 'tweet', id}`, fetched from api.fxtwitter.com
 - `{type: 'linkpeek', id, url, peek}` — page metadata (title,
   description, site, image, icon, color, author, published, views,
-  final url)
+  facts, video, ttl, final url). `video` is a directly playable file —
+  instagram reels resolve one through kkclip (kkscript), which 302s a
+  bot UA to the signed CDN mp4; the card stays metadata-only if that
+  service is down
   for a url the embedder requested
   with `{type: 'linkpeek', id, url}`; `peek` is null on failure. The
   relay calls the embedder's Cloudflare worker
