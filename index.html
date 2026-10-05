@@ -265,7 +265,9 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
         const doc = new DOMParser().parseFromString(html, 'text/html');
         let bestMs = Infinity;
         for (const tr of doc.querySelectorAll('table tr')) {
-          const host = tr.querySelector('td a[href^="http"]')?.href;
+          // tracker hrefs end in '/', and some instances 400 on a doubled
+          // slash - strip it here so `${host}/path` always lands clean
+          const host = tr.querySelector('td a[href^="http"]')?.href.replace(/\/+$/, '');
           const healthy = tr.querySelector('span[aria-label="healthy"]');
           const ms = parseInt(tr.querySelector('td[data-name="average"]')?.textContent, 10);
           if (host && healthy && ms > 0 && ms < bestMs) { best = host; bestMs = ms; }
