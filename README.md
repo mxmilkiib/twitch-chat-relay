@@ -96,7 +96,10 @@ this repo). It answers only the relay and embedder origins listed in
 `<head>` (further, to 128 KB, when the head has no og:title or JSON-LD),
 and has dedicated lookups for YouTube, GitHub, Wikipedia, Hacker News
 items (via the official firebase api - HN itself refuses datacentre
-fetches) and Twitch channel links. The YouTube lookup also streams the
+fetches) and Twitch channel links. Twitch answers carry extra fact
+chips from ivr.fi - live status, followers, chatters, account age,
+role, and the channel's chat modes - and flag a short ttl while the
+streamer is live so the cards refresh. The YouTube lookup also streams the
 watch page far enough to pull the upload date and view count out of its
 embedded player json, since oEmbed carries neither. For other pages it merges og/twitter tags, schema.org
 JSON-LD, `<title>`/description, the page's advertised oEmbed endpoint,

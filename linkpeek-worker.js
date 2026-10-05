@@ -1,7 +1,10 @@
 // Link preview worker for hasanabi.neocities.org (Cloudflare Workers).
 // GET /?url=<page> returns trimmed metadata as JSON:
-//   { title, description, site, image, icon, color, author, published, views, url }
+//   { title, description, site, image, icon, color, author, published,
+//     views, facts, ttl, url }
 //   url = final address after redirects
+//   facts = provider-supplied fact chips (eg twitch live/followers/modes)
+//   ttl   = seconds the provider wants this cached (volatile previews)
 // Sources, best first: og:/twitter: tags, schema.org JSON-LD, then <title>
 // and meta description; the page's own oEmbed endpoint fills any gap left
 // in image, site, author or title. A non-html target still answers with
@@ -21,12 +24,20 @@ const TTL_OK = 86400;
 const TTL_FAIL = 60;
 const UA = 'hasan-linkpeek/1.0 (+https://hasanabi.neocities.org/)';
 
-// 1823458356 -> '1.8B views', 1234567 -> '1.2M views', 42 -> '42 views'
-const fmtCount = (n) =>
+// 1823458356 -> '1.8B', 1234567 -> '1.2M', 42 -> '42'
+const abbrev = (n) =>
   `${n >= 1e9 ? +(n / 1e9).toFixed(1) + 'B'
     : n >= 1e6 ? +(n / 1e6).toFixed(1) + 'M'
     : n >= 1e3 ? Math.round(n / 1e3) + 'K'
-    : n} views`;
+    : n}`;
+const fmtCount = (n) => `${abbrev(n)} views`;
+
+// 'just now'..'5d ago' for lastBroadcast stamps
+const rel = (ts) => {
+  const s = Math.max(0, (Date.now() - ts) / 1e3);
+  return s < 90 ? 'just now' : s < 5400 ? `${Math.round(s / 60)}m ago`
+    : s < 129600 ? `${Math.round(s / 3600)}h ago` : `${Math.round(s / 86400)}d ago`;
+};
 
 const corsFor = (origin) => ({
   'Access-Control-Allow-Origin': origin,
@@ -126,7 +137,40 @@ const PROVIDERS = [
     if (!login || /^(directory|videos|settings|downloads|jobs|turbo|store|p)$/i.test(login)) return null;
     const j = await getJson(`https://api.ivr.fi/v2/twitch/user?login=${login}`);
     const user = Array.isArray(j) ? j[0] : j;
-    return user && user.displayName ? { title: user.displayName, description: user.bio, site: 'Twitch', image: user.logo } : null;
+    if (!user || !user.displayName) return null;
+    // the ivr.fi payload is rich - surface the bits a chatter cares
+    // about as fact chips: live state, reach, age, standing, chat modes
+    const facts = [], st = user.stream;
+    if (st) facts.push(`live · ${abbrev(st.viewersCount || 0)} watching${st.game ? ' · ' + st.game.displayName : ''}`);
+    else if (user.lastBroadcast && user.lastBroadcast.startedAt)
+      facts.push(`last live ${rel(Date.parse(user.lastBroadcast.startedAt))}`);
+    if (user.followers != null) facts.push(`${abbrev(user.followers)} followers`);
+    if (user.chatterCount > 0) facts.push(`${abbrev(user.chatterCount)} chatting`);
+    if (user.createdAt) facts.push(`joined ${user.createdAt.slice(0, 7)}`);
+    const r = user.roles || {};
+    if (user.banned) facts.push('banned');
+    else {
+      if (r.isPartner) facts.push('partner'); else if (r.isAffiliate) facts.push('affiliate');
+      if (r.isStaff) facts.push('staff');
+      if (user.verifiedBot) facts.push('verified bot');
+    }
+    const cs = user.chatSettings || {};
+    if (cs.followersOnlyDurationMinutes)
+      facts.push(`followers only ${cs.followersOnlyDurationMinutes >= 60 ? Math.round(cs.followersOnlyDurationMinutes / 60) + 'h' : cs.followersOnlyDurationMinutes + 'm'}`);
+    if (cs.isSubscribersOnlyModeEnabled) facts.push('subs only');
+    if (cs.isEmoteOnlyModeEnabled) facts.push('emote only');
+    if (cs.isFastSubsModeEnabled) facts.push('fast subs only');
+    if (cs.isUniqueChatModeEnabled) facts.push('unique chat');
+    if (cs.requireVerifiedAccount) facts.push('verified acct');
+    if (cs.slowModeDurationSeconds) facts.push(`slow ${cs.slowModeDurationSeconds}s`);
+    if (cs.chatDelayMs) facts.push(`${cs.chatDelayMs / 1e3}s delay`);
+    if (cs.blockLinks) facts.push('links blocked');
+    return {
+      title: user.displayName,
+      description: [st && st.title, user.bio].filter(Boolean).join(' — '),
+      site: 'Twitch', image: user.logo, color: user.chatColor,
+      facts, ttl: st ? 300 : 0,
+    };
   }],
 ];
 
@@ -368,9 +412,14 @@ export default {
       author: clean(found.author, 80) || null,
       published: Number.isNaN(Date.parse(found.published)) ? null : new Date(found.published).toISOString().slice(0, 10),
       views: /^\d+$/.test(found.views || '') ? fmtCount(+found.views) : null,
+      facts: Array.isArray(found.facts)
+        ? found.facts.map((f) => clean(f, 80)).filter(Boolean).slice(0, 8) : null,
+      // providers flag volatile previews (eg a live stream) with a
+      // shorter ttl - echoed so the client cache honours it too
+      ttl: found.ttl > 0 ? Math.min(found.ttl, TTL_OK) : null,
       url: found.url,
     } : { error: 'no preview', url: found ? found.url : target.href };
-    const out = reply(body, origin, 200, body.error ? TTL_FAIL : TTL_OK);
+    const out = reply(body, origin, 200, body.error ? TTL_FAIL : (body.ttl || TTL_OK));
     ctx.waitUntil(cache.put(key, out.clone()));
     return out;
   },
