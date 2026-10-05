@@ -93,8 +93,9 @@ on this page it lives in localStorage until logout.)
 ## Link preview worker
 
 `linkpeek-worker.js` is the Cloudflare Worker behind `{type: 'linkpeek'}`
-(paste it into the worker's editor and deploy; it is not served from
-this repo). It answers only the relay and embedder origins listed in
+(pushes to main deploy it via the workflow; needs repo secrets
+`CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, or run
+`npx wrangler deploy` locally). It answers only the relay and embedder origins listed in
 `ALLOWED`, vets every redirect hop, reads each page up to the end of
 `<head>` (further, to 128 KB, when the head has no og:title or JSON-LD),
 and has dedicated lookups for YouTube, GitHub, Wikipedia, Hacker News
