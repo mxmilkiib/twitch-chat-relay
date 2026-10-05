@@ -85,6 +85,15 @@ The relay holds the token only in memory — it isn't stored or forwarded
 anywhere except the Twitch socket. (The embedder may persist it locally;
 on this page it lives in localStorage until logout.)
 
+## Link preview worker
+
+`linkpeek-worker.js` is the Cloudflare Worker behind `{type: 'linkpeek'}`
+(paste it into the worker's editor and deploy; it is not served from
+this repo). It answers only the relay and embedder origins listed in
+`ALLOWED`, vets every redirect hop, reads each page up to the end of
+`<head>`, and has dedicated lookups for YouTube, GitHub, Wikipedia and
+Twitch channel links. Hits cache for a day.
+
 ## Deploy
 
 Push to `main`; GitHub Pages serves it.

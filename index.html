@@ -367,11 +367,12 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
     if (d.type === 'linkpeek') {
       if (peer && event.source === peer.source && event.origin === peer.origin
           && typeof d.url === 'string' && /^https?:\/\/\S{1,2000}$/.test(d.url)) {
-        fetch(PEEK_URL + '?url=' + encodeURIComponent(d.url))
+        fetch(PEEK_URL + '?url=' + encodeURIComponent(d.url), { signal: AbortSignal.timeout(10000) })
           .then((r) => (r.ok ? r.json() : null))
           .then((j) => {
-            const ok = j && (typeof j.title === 'string' || typeof j.description === 'string'
-              || typeof j.site === 'string');
+            // a failed scrape still forwards the resolved address, so a
+            // shortened link reveals its destination even without a card
+            const ok = j && (typeof j.url === 'string' || typeof j.title === 'string');
             send({ type: 'linkpeek', id: d.id, url: d.url, peek: ok ? {
               title: typeof j.title === 'string' ? j.title : '',
               description: typeof j.description === 'string' ? j.description : '',
