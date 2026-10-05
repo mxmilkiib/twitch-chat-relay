@@ -30,7 +30,8 @@ const decode = (s) => s
   .replace(/&#x([0-9a-f]+);/gi, (m, h) => String.fromCodePoint(parseInt(h, 16) || 63))
   .replace(/&#(\d+);/g, (m, d) => String.fromCodePoint(+d || 63))
   .replace(/&([a-z]+);/gi, (m, n) => ENT[n.toLowerCase()] ?? m);
-const clean = (s, max) => decode(String(s || '')).replace(/\s+/g, ' ').trim().slice(0, max);
+// twice: some sites (twitch) double-encode, leaving a literal &#39; behind
+const clean = (s, max) => decode(decode(String(s || ''))).replace(/\s+/g, ' ').trim().slice(0, max);
 
 // refuse anything that isn't a public-looking hostname on a default port
 function safeTarget(u) {
@@ -165,7 +166,8 @@ export default {
     const key = new Request(`${self.origin}/?url=${encodeURIComponent(target.href)}`);
     const cache = caches.default;
     const hit = await cache.match(key);
-    if (hit) return new Response(hit.body, { status: hit.status, headers: { ...Object.fromEntries(hit.headers), ...corsFor(origin) } });
+    if (hit) return new Response(hit.body, { status: hit.status, headers: {
+      ...corsFor(origin), 'Content-Type': 'application/json', 'Cache-Control': hit.headers.get('Cache-Control') || '' } });
 
     let found = null;
     try { found = await peek(target); } catch { found = null; }
