@@ -36,8 +36,13 @@ const decode = (s) => s
   .replace(/&#x([0-9a-f]+);/gi, (m, h) => String.fromCodePoint(parseInt(h, 16) || 63))
   .replace(/&#(\d+);/g, (m, d) => String.fromCodePoint(+d || 63))
   .replace(/&([a-z]+);/gi, (m, n) => ENT[n.toLowerCase()] ?? m);
-// twice: some sites (twitch) double-encode, leaving a literal &#39; behind
-const clean = (s, max) => decode(decode(String(s || ''))).replace(/\s+/g, ' ').trim().slice(0, max);
+// until stable (bounded): some sites stack encodings - twitch leaves a
+// literal &#39; behind one pass, linktree &amp; behind two
+const clean = (s, max) => {
+  let v = String(s || '');
+  for (let i = 0; i < 4; i++) { const d = decode(v); if (d === v) break; v = d; }
+  return v.replace(/\s+/g, ' ').trim().slice(0, max);
+};
 
 // refuse anything that isn't a public-looking hostname on a default port
 function safeTarget(u) {
