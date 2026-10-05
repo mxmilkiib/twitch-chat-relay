@@ -1,14 +1,20 @@
 // Link preview worker for hasanabi.neocities.org (Cloudflare Workers).
 // GET /?url=<page> returns trimmed metadata as JSON:
-//   { title, description, site, image, url }   url = final address after redirects
+//   { title, description, site, image, icon, color, author, published, url }
+//   url = final address after redirects
+// Sources, best first: og:/twitter: tags, schema.org JSON-LD, then <title>
+// and meta description; the page's own oEmbed endpoint fills any gap left
+// in image, site, author or title.
 // Callers are the chat relay iframe (github.io) and the page itself; both
 // send an Origin header, which is required and checked against ALLOWED.
 // Hits cache for a day, misses for a minute. Only metadata ever leaves -
-// target bodies are read up to the end of <head> and discarded.
+// a page is read up to the end of <head> (further, up to MAX_READ, only when
+// the head carries no og:title or JSON-LD) and the rest is discarded.
 const ALLOWED = ['https://mxmilkiib.github.io', 'https://hasanabi.neocities.org'];
 const MAX_URL = 2048;
 const MAX_HOPS = 4;
-const MAX_HEAD = 96 * 1024;
+const MAX_READ = 128 * 1024;
+const MAX_LD = 64 * 1024;
 const TTL_OK = 86400;
 const TTL_FAIL = 60;
 const UA = 'hasan-linkpeek/1.0 (+https://hasanabi.neocities.org/)';
@@ -89,7 +95,67 @@ class MetaGrab {
     else if (key === 'description') o.desc ||= val;
     else if (key === 'og:site_name' || key === 'application-name') o.site ||= val;
     else if (key === 'og:image' || key === 'og:image:url' || key === 'twitter:image' || key === 'twitter:image:src') o.image ||= val;
+    else if (key === 'theme-color') o.color ||= val;
+    else if (key === 'author' || (key === 'article:author' && !/^https?:/i.test(val))) o.author ||= val;
+    else if (key === 'article:published_time') o.published ||= val;
   }
+}
+
+// <link> tags: the page's oEmbed endpoint and its icons
+class LinkGrab {
+  constructor(out) { this.out = out; }
+  element(el) {
+    const rel = (el.getAttribute('rel') || '').toLowerCase().split(/\s+/);
+    const href = el.getAttribute('href');
+    if (!href) return;
+    const o = this.out;
+    if (rel.includes('alternate') && /json\+oembed/i.test(el.getAttribute('type') || '')) o.oembed ||= href;
+    else if (rel.includes('icon')) o.icon ||= href;
+    else if (rel.includes('apple-touch-icon')) o.touch ||= href;
+  }
+}
+
+// schema.org JSON-LD blocks, collected per script and capped overall
+class LdGrab {
+  constructor(list) { this.list = list; this.size = 0; }
+  element() { this.list.push(''); }
+  text(t) {
+    if (this.size > MAX_LD || !this.list.length) return;
+    this.size += t.text.length;
+    this.list[this.list.length - 1] += t.text;
+  }
+}
+
+const LD_RICH = /Article|Posting|Product|Video|Recipe|Event|Movie|Book|Podcast|Course|Software/;
+const ldType = (n) => [].concat(n['@type'] || []).join(' ');
+const ldName = (v) => (!v ? '' : typeof v === 'string' ? v : Array.isArray(v) ? ldName(v[0]) : typeof v.name === 'string' ? v.name : '');
+const ldImage = (v) => (!v ? '' : typeof v === 'string' ? v : Array.isArray(v) ? ldImage(v[0]) : typeof v.url === 'string' ? v.url : '');
+const ldStr = (v) => (typeof v === 'string' ? v : '');
+
+// the most descriptive node across every block, walking @graph wrappers
+function pickLd(scripts) {
+  const nodes = [];
+  const walk = (n) => {
+    if (!n || typeof n !== 'object') return;
+    if (Array.isArray(n)) return n.forEach(walk);
+    nodes.push(n);
+    if (n['@graph']) walk(n['@graph']);
+  };
+  for (const s of scripts) { try { walk(JSON.parse(s)); } catch { /* malformed block */ } }
+  return nodes.find((n) => LD_RICH.test(ldType(n)))
+    || nodes.find((n) => /WebPage|WebSite|Organization/.test(ldType(n))) || null;
+}
+
+// the page's advertised oEmbed endpoint, vetted like any other target
+async function fetchOembed(href, base) {
+  let u;
+  try { u = new URL(href, base); } catch { return null; }
+  if (u.protocol !== 'https:' || !safeTarget(u)) return null;
+  try {
+    const res = await fetch(u.href, { redirect: 'manual', signal: AbortSignal.timeout(4000), headers: { 'User-Agent': UA, Accept: 'application/json' } });
+    if (!res.ok || !/json/i.test(res.headers.get('content-type') || '')) return null;
+    return JSON.parse(await readText(res, 64 * 1024));
+  } catch { return null; }
 }
 
 // follows redirects by hand so every hop is vetted, not just the first
@@ -109,22 +175,36 @@ async function fetchPage(first) {
   return null;
 }
 
-// reads up to the end of <head> (or MAX_HEAD bytes) and drops the rest
-async function readHead(res) {
+// streams a body as text up to `max` bytes, or until stop(all, fresh) says
+// so, then cancels the rest
+async function readText(res, max, stop) {
   const type = res.headers.get('content-type') || '';
   let dec;
   try { dec = new TextDecoder((type.match(/charset=([\w-]+)/i) || [])[1] || 'utf-8'); } catch { dec = new TextDecoder(); }
   const reader = res.body.getReader();
-  let html = '', bytes = 0;
-  while (bytes < MAX_HEAD) {
+  let text = '', bytes = 0, prev = '';
+  while (bytes < max) {
     const { done, value } = await reader.read();
     if (done) break;
     bytes += value.length;
-    html += dec.decode(value, { stream: true });
-    if (/<\/head>/i.test(html)) break;
+    const fresh = dec.decode(value, { stream: true });
+    text += fresh;
+    // the closing tag may straddle two chunks, so the test sees the seam
+    if (stop && stop(text, prev + fresh)) break;
+    prev = fresh.slice(-16);
   }
   reader.cancel().catch(() => {});
-  return html;
+  return text;
+}
+
+// ends at </head>, unless the head held no og:title or JSON-LD - then the
+// body may still carry a JSON-LD block, so reading runs on to MAX_READ
+function headStop() {
+  let headDone = false;
+  return (all, fresh) => {
+    if (!headDone && /<\/head>/i.test(fresh)) headDone = true;
+    return headDone && /og:title|ld\+json/i.test(all);
+  };
 }
 
 async function peek(first) {
@@ -139,12 +219,36 @@ async function peek(first) {
   const { res, url } = got;
   if (!res.ok || !/text\/html|xhtml/i.test(res.headers.get('content-type') || '')) return null;
   const meta = {};
-  const head = await readHead(res).catch(() => '');
+  const lds = [];
+  const head = await readText(res, MAX_READ, headStop()).catch(() => '');
   await new HTMLRewriter()
     .on('title', { text(t) { meta.rawTitle = (meta.rawTitle || '') + t.text; } })
     .on('meta', new MetaGrab(meta))
+    .on('link', new LinkGrab(meta))
+    .on('script[type="application/ld+json" i]', new LdGrab(lds))
     .transform(new Response(head, { headers: { 'content-type': 'text/html' } }))
     .text();
+
+  // JSON-LD sits between og: tags and the bare <title>/description
+  const ld = pickLd(lds);
+  if (ld) {
+    meta.ldTitle = ldStr(ld.headline) || ldName(ld.name) || ldStr(ld.name);
+    meta.ldDesc = ldStr(ld.description);
+    meta.image ||= ldImage(ld.image);
+    meta.site ||= ldName(ld.publisher);
+    meta.author ||= ldName(ld.author);
+    meta.published ||= ldStr(ld.datePublished);
+  }
+  // the page's own oEmbed endpoint only fills what is still missing
+  if (meta.oembed && (!meta.image || !(meta.title || meta.ldTitle) || !(meta.ogDesc || meta.ldDesc || meta.desc))) {
+    const oe = await fetchOembed(meta.oembed, url);
+    if (oe && typeof oe === 'object') {
+      if (!meta.ldTitle && !meta.rawTitle) meta.title ||= ldStr(oe.title);
+      meta.image ||= ldStr(oe.thumbnail_url);
+      meta.site ||= ldStr(oe.provider_name);
+      meta.author ||= ldStr(oe.author_name);
+    }
+  }
   return { ...meta, url: url.href };
 }
 
@@ -171,11 +275,22 @@ export default {
 
     let found = null;
     try { found = await peek(target); } catch { found = null; }
-    const body = found && (found.title || found.rawTitle || found.ogDesc || found.desc) ? {
-      title: clean(found.title || found.rawTitle, 200) || null,
-      description: clean(found.ogDesc || found.desc || found.description, 300) || null,
+    // relative and http: addresses resolve against the page; only https survives
+    const abs = (v) => {
+      if (!v) return null;
+      try { const i = new URL(clean(v, 1000), found.url); return i.protocol === 'https:' ? i.href : null; } catch { return null; }
+    };
+    const title = found && (found.title || found.ldTitle || found.rawTitle);
+    const desc = found && (found.ogDesc || found.ldDesc || found.desc || found.description);
+    const body = found && (title || desc) ? {
+      title: clean(title, 200) || null,
+      description: clean(desc, 300) || null,
       site: clean(found.site, 80) || target.hostname,
-      image: found.image ? (() => { try { const i = new URL(clean(found.image, 1000), found.url); return i.protocol === 'https:' ? i.href : null; } catch { return null; } })() : null,
+      image: abs(found.image),
+      icon: abs(found.icon || found.touch),
+      color: /^#[0-9a-f]{3,8}$/i.test(found.color || '') ? found.color : null,
+      author: clean(found.author, 80) || null,
+      published: Number.isNaN(Date.parse(found.published)) ? null : new Date(found.published).toISOString().slice(0, 10),
       url: found.url,
     } : { error: 'no preview', url: found ? found.url : target.href };
     const out = reply(body, origin, 200, body.error ? TTL_FAIL : TTL_OK);

@@ -72,8 +72,9 @@ Relay → parent:
 - `{type: 'tweet', id, tweet}` — preview data (text, author, photo and
   video thumbnails, quoted-tweet media) for a status id the embedder
   requested with `{type: 'tweet', id}`, fetched from api.fxtwitter.com
-- `{type: 'linkpeek', id, url, peek}` — Open Graph metadata (title,
-  description, site, image, final url) for a url the embedder requested
+- `{type: 'linkpeek', id, url, peek}` — page metadata (title,
+  description, site, image, icon, color, author, published, final url)
+  for a url the embedder requested
   with `{type: 'linkpeek', id, url}`; `peek` is null on failure. The
   relay calls the embedder's Cloudflare worker
   (hasanabi-chat-thing-linkpeek) — the worker does the scrape, so the
@@ -91,8 +92,12 @@ on this page it lives in localStorage until logout.)
 (paste it into the worker's editor and deploy; it is not served from
 this repo). It answers only the relay and embedder origins listed in
 `ALLOWED`, vets every redirect hop, reads each page up to the end of
-`<head>`, and has dedicated lookups for YouTube, GitHub, Wikipedia and
-Twitch channel links. Hits cache for a day.
+`<head>` (further, to 128 KB, when the head has no og:title or JSON-LD),
+and has dedicated lookups for YouTube, GitHub, Wikipedia and Twitch
+channel links. For other pages it merges og/twitter tags, schema.org
+JSON-LD, `<title>`/description, the page's advertised oEmbed endpoint,
+its icon and theme-color, and any author and publish date. Hits cache
+for a day.
 
 ## Deploy
 

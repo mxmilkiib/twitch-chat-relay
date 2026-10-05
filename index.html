@@ -362,7 +362,8 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
       }
       return;
     }
-    // generic link previews: the worker scrapes og/twitter meta tags; only
+    // generic link previews: the worker gathers og/twitter tags, JSON-LD and
+    // oEmbed data; only
     // whitelisted fields cross the iframe boundary
     if (d.type === 'linkpeek') {
       if (peer && event.source === peer.source && event.origin === peer.origin
@@ -378,6 +379,10 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
               description: typeof j.description === 'string' ? j.description : '',
               site: typeof j.site === 'string' ? j.site : '',
               image: typeof j.image === 'string' && /^https:\/\//.test(j.image) ? j.image : '',
+              icon: typeof j.icon === 'string' && /^https:\/\//.test(j.icon) ? j.icon : '',
+              color: typeof j.color === 'string' && /^#[0-9a-f]{3,8}$/i.test(j.color) ? j.color : '',
+              author: typeof j.author === 'string' ? j.author.slice(0, 80) : '',
+              published: typeof j.published === 'string' && /^\d{4}-\d\d-\d\d$/.test(j.published) ? j.published : '',
               url: typeof j.url === 'string' && /^https?:\/\//.test(j.url) ? j.url : '',
             } : null });
           })
