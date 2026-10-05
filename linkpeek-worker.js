@@ -32,11 +32,18 @@ const abbrev = (n) =>
     : n}`;
 const fmtCount = (n) => `${abbrev(n)} views`;
 
-// 'just now'..'5d ago' for lastBroadcast stamps
+// 'just now'..'2.3y ago' for lastBroadcast stamps; long gaps read as
+// months then years so an old stream doesn't say '742d ago'
 const rel = (ts) => {
   const s = Math.max(0, (Date.now() - ts) / 1e3);
-  return s < 90 ? 'just now' : s < 5400 ? `${Math.round(s / 60)}m ago`
-    : s < 129600 ? `${Math.round(s / 3600)}h ago` : `${Math.round(s / 86400)}d ago`;
+  if (s < 90) return 'just now';
+  if (s < 5400) return `${Math.round(s / 60)}m ago`;
+  if (s < 129600) return `${Math.round(s / 3600)}h ago`;
+  const d = Math.round(s / 86400);
+  if (d < 45) return `${d}d ago`;
+  if (d < 548) return `${Math.round(d / 30.44)}mo ago`;
+  const y = d / 365.25;
+  return `${y < 10 ? y.toFixed(1).replace(/\.0$/, '') : Math.round(y)}y ago`;
 };
 
 const corsFor = (origin) => ({
