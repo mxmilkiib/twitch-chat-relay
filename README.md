@@ -28,8 +28,9 @@ iframe.contentWindow.postMessage({ type: 'join', channel: 'somechannel' },
 
 Parent → relay: `{type: 'join', channel}`, `{type: 'backfill'}` —
 backfill fetches the recent backlog from recent-messages.robotty.de and
-returns it as `lines` for the embedder to dedup — and `{type: 'tweet',
-id}` for a link preview.
+returns it as `lines` for the embedder to dedup — `{type: 'tweet', id}`
+for a tweet preview, and `{type: 'linkpeek', id, url}` for a generic
+link preview via the embedder's Cloudflare worker.
 
 Optional authenticated mode:
 
@@ -71,6 +72,12 @@ Relay → parent:
 - `{type: 'tweet', id, tweet}` — preview data (text, author, photo and
   video thumbnails, quoted-tweet media) for a status id the embedder
   requested with `{type: 'tweet', id}`, fetched from api.fxtwitter.com
+- `{type: 'linkpeek', id, url, peek}` — Open Graph metadata (title,
+  description, site, image, final url) for a url the embedder requested
+  with `{type: 'linkpeek', id, url}`; `peek` is null on failure. The
+  relay calls the embedder's Cloudflare worker
+  (hasanabi-chat-thing-linkpeek) — the worker does the scrape, so the
+  relay itself never proxies arbitrary page bodies
 - `{type: 'repo', stars, created, pushed}` — GitHub metadata for the
   embedder's repo, for its help panel
 

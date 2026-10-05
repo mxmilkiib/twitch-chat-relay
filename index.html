@@ -23,6 +23,9 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
   let ws;
   const channels = new Set(); // joined channels; every message tags its own
   const MAX_CHANNELS = 6;
+  // Open Graph previews come from a Cloudflare worker - the embedder's
+  // connect-src is 'self', and arbitrary page fetches need a server anyway
+  const PEEK_URL = 'https://hasanabi-chat-thing-linkpeek.github-76c.workers.dev/';
   let reconnectAttempt = 0;
   let peer = null; // { source, origin } of the embedding page
   let auth = null; // { token, login } - user creds replace the anon nick
@@ -356,6 +359,28 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
             } : null });
           })
           .catch(() => send({ type: 'tweet', id: d.id, tweet: null }));
+      }
+      return;
+    }
+    // generic link previews: the worker scrapes og/twitter meta tags; only
+    // whitelisted fields cross the iframe boundary
+    if (d.type === 'linkpeek') {
+      if (peer && event.source === peer.source && event.origin === peer.origin
+          && typeof d.url === 'string' && /^https?:\/\/\S{1,2000}$/.test(d.url)) {
+        fetch(PEEK_URL + '?url=' + encodeURIComponent(d.url))
+          .then((r) => (r.ok ? r.json() : null))
+          .then((j) => {
+            const ok = j && (typeof j.title === 'string' || typeof j.description === 'string'
+              || typeof j.site === 'string');
+            send({ type: 'linkpeek', id: d.id, url: d.url, peek: ok ? {
+              title: typeof j.title === 'string' ? j.title : '',
+              description: typeof j.description === 'string' ? j.description : '',
+              site: typeof j.site === 'string' ? j.site : '',
+              image: typeof j.image === 'string' && /^https:\/\//.test(j.image) ? j.image : '',
+              url: typeof j.url === 'string' && /^https?:\/\//.test(j.url) ? j.url : '',
+            } : null });
+          })
+          .catch(() => send({ type: 'linkpeek', id: d.id, url: d.url, peek: null }));
       }
       return;
     }
