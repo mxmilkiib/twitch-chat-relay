@@ -73,7 +73,8 @@ Relay → parent:
   video thumbnails, quoted-tweet media) for a status id the embedder
   requested with `{type: 'tweet', id}`, fetched from api.fxtwitter.com
 - `{type: 'linkpeek', id, url, peek}` — page metadata (title,
-  description, site, image, icon, color, author, published, final url)
+  description, site, image, icon, color, author, published, views,
+  final url)
   for a url the embedder requested
   with `{type: 'linkpeek', id, url}`; `peek` is null on failure. The
   relay calls the embedder's Cloudflare worker
@@ -95,7 +96,9 @@ this repo). It answers only the relay and embedder origins listed in
 `<head>` (further, to 128 KB, when the head has no og:title or JSON-LD),
 and has dedicated lookups for YouTube, GitHub, Wikipedia, Hacker News
 items (via the official firebase api - HN itself refuses datacentre
-fetches) and Twitch channel links. For other pages it merges og/twitter tags, schema.org
+fetches) and Twitch channel links. The YouTube lookup also streams the
+watch page far enough to pull the upload date and view count out of its
+embedded player json, since oEmbed carries neither. For other pages it merges og/twitter tags, schema.org
 JSON-LD, `<title>`/description, the page's advertised oEmbed endpoint,
 its icon and theme-color, and any author and publish date. Hits cache
 for a day.

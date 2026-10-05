@@ -1,6 +1,6 @@
 // Link preview worker for hasanabi.neocities.org (Cloudflare Workers).
 // GET /?url=<page> returns trimmed metadata as JSON:
-//   { title, description, site, image, icon, color, author, published, url }
+//   { title, description, site, image, icon, color, author, published, views, url }
 //   url = final address after redirects
 // Sources, best first: og:/twitter: tags, schema.org JSON-LD, then <title>
 // and meta description; the page's own oEmbed endpoint fills any gap left
@@ -20,6 +20,13 @@ const MAX_LD = 64 * 1024;
 const TTL_OK = 86400;
 const TTL_FAIL = 60;
 const UA = 'hasan-linkpeek/1.0 (+https://hasanabi.neocities.org/)';
+
+// 1823458356 -> '1.8B views', 1234567 -> '1.2M views', 42 -> '42 views'
+const fmtCount = (n) =>
+  `${n >= 1e9 ? +(n / 1e9).toFixed(1) + 'B'
+    : n >= 1e6 ? +(n / 1e6).toFixed(1) + 'M'
+    : n >= 1e3 ? Math.round(n / 1e3) + 'K'
+    : n} views`;
 
 const corsFor = (origin) => ({
   'Access-Control-Allow-Origin': origin,
@@ -63,7 +70,25 @@ const PROVIDERS = [
   [/^(?:www\.|m\.|music\.)?youtube\.com$|^youtu\.be$/, async (u) => {
     if (u.hostname.endsWith('youtube.com') && !/^\/(watch|shorts|live|playlist)/.test(u.pathname)) return null;
     const j = await getJson(`https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(u.href)}`);
-    return j && j.title ? { title: j.title, description: j.author_name ? `by ${j.author_name}` : '', site: 'YouTube', image: j.thumbnail_url } : null;
+    const out = j && j.title ? { title: j.title, description: j.author_name ? `by ${j.author_name}` : '', site: 'YouTube', image: j.thumbnail_url } : null;
+    // oembed carries no date or views - they sit in the watch page's
+    // player json ~700KB in, scanned chunk-wise so the read stops early
+    const vid = u.hostname === 'youtu.be' ? u.pathname.split('/')[1]
+      : u.pathname === '/watch' ? u.searchParams.get('v')
+      : (u.pathname.match(/^\/(?:shorts|live)\/([\w-]+)/) || [])[1];
+    if (!vid) return out;
+    const w = await fetchPage(new URL(`https://www.youtube.com/watch?v=${encodeURIComponent(vid)}`)).catch(() => null);
+    if (w && w.res.ok) {
+      let views = '', pub = '';
+      await readText(w.res, 900 * 1024, (all, fresh) => {
+        if (!views) views = (/"viewCount":"(\d+)"/.exec(fresh) || [])[1] || '';
+        if (!pub) pub = (/"(?:publish|upload)Date":"(\d{4}-\d\d-\d\d)/.exec(fresh) || [])[1] || '';
+        return !!(views && pub);
+      }).catch(() => '');
+      if (out) { out.views = views; out.published = pub; }
+      w.res.body && w.res.body.cancel().catch(() => {});
+    }
+    return out;
   }],
   [/^(?:www\.)?github\.com$/, async (u) => {
     const [owner, repo] = u.pathname.split('/').filter(Boolean);
@@ -342,6 +367,7 @@ export default {
       color: /^#[0-9a-f]{3,8}$/i.test(found.color || '') ? found.color : null,
       author: clean(found.author, 80) || null,
       published: Number.isNaN(Date.parse(found.published)) ? null : new Date(found.published).toISOString().slice(0, 10),
+      views: /^\d+$/.test(found.views || '') ? fmtCount(+found.views) : null,
       url: found.url,
     } : { error: 'no preview', url: found ? found.url : target.href };
     const out = reply(body, origin, 200, body.error ? TTL_FAIL : TTL_OK);

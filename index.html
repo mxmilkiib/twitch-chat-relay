@@ -385,6 +385,7 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
               color: typeof j.color === 'string' && /^#[0-9a-f]{3,8}$/i.test(j.color) ? j.color : '',
               author: typeof j.author === 'string' ? j.author.slice(0, 80) : '',
               published: typeof j.published === 'string' && /^\d{4}-\d\d-\d\d$/.test(j.published) ? j.published : '',
+              views: typeof j.views === 'string' ? j.views.slice(0, 40) : '',
               url: typeof j.url === 'string' && /^https?:\/\//.test(j.url) ? j.url : '',
             } : null });
           })
