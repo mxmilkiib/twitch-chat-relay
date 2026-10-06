@@ -13,7 +13,10 @@ messages containing raw Twitch IRC lines, plus periodic
 decapi and <code>{type: 'emotes', channel, ...}</code> sets per channel.
 <code>{type: 'auth', token}</code> logs the socket in as that user, after
 which <code>{type: 'send', channel, text}</code> posts to a joined channel;
-the relay replies <code>{type: 'auth', login}</code> or an error.</p>
+the relay replies <code>{type: 'auth', login}</code> or an error.
+<code>{type: 'streamprobe', channels: [...]}</code> asks for a one-shot
+decapi status check on channels outside the join set, answered with
+the same <code>{type: 'stream'}</code> reports.</p>
 <script>
 // Anonymous read-only IRC-over-WebSocket relay for hosts whose CSP forbids
 // external connect-src (e.g. neocities). GitHub Pages serves no CSP, so the
@@ -334,6 +337,32 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
     if (d.type === 'auth') {
       if (peer && event.source === peer.source && event.origin === peer.origin)
         setAuth(typeof d.token === 'string' && d.token ? d.token : null);
+      return;
+    }
+    // one-shot live probe for channels outside the join set - the same
+    // decapi trio as pollStream, answered with the usual 'stream' shape.
+    // a small worker pool keeps dozens of channels from bursting decapi
+    if (d.type === 'streamprobe') {
+      if (peer && event.source === peer.source && event.origin === peer.origin
+          && Array.isArray(d.channels)) {
+        const queue = [...new Set(d.channels
+          .map((c) => String(c).toLowerCase().replace(/[^a-z0-9_]/g, ''))
+          .filter(Boolean))].slice(0, 64);
+        const probe = async () => {
+          let ch;
+          while ((ch = queue.shift())) {
+            try {
+              const [uptime, viewers, title] = await Promise.all([
+                fetch(`https://decapi.me/twitch/uptime/${ch}`).then((r) => r.text()),
+                fetch(`https://decapi.me/twitch/viewercount/${ch}`).then((r) => r.text()),
+                fetch(`https://decapi.me/twitch/title/${ch}`).then((r) => r.text()),
+              ]);
+              send({ type: 'stream', channel: ch, uptime: uptime.trim(), viewers: viewers.trim(), title: title.trim() });
+            } catch {}
+          }
+        };
+        for (let i = Math.min(4, queue.length); i > 0; i--) probe();
+      }
       return;
     }
     // tweet previews: fxtwitter's public JSON API answers without an x
