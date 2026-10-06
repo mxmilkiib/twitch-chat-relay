@@ -111,6 +111,56 @@ const PROVIDERS = [
     }
     return out;
   }],
+  [/^(?:www\.|old\.|np\.|m\.)?reddit\.com$|^redd\.it$/, async (u) => {
+    // reddit serves a bare js shell to non-browser fetches, but its atom
+    // feeds are still open: a post's .rss holds title/author/sub/body/date,
+    // a sub or user feed holds a subtitle and the recent post titles
+    let feed = '', post = false;
+    if (u.hostname === 'redd.it') {
+      const got = await fetchPage(new URL(`https://redd.it${u.pathname}`)).catch(() => null);
+      if (!got || !got.res.ok) return null;
+      got.res.body && got.res.body.cancel().catch(() => {});
+      const cm = got.url.pathname.match(/^\/r\/[\w-]+\/comments\/[a-z0-9]+/i);
+      if (cm) { feed = `https://www.reddit.com${cm[0]}`; post = true; }
+    } else {
+      const cm = u.pathname.match(/^\/(?:r\/[\w-]+\/)?comments\/[a-z0-9]+/i);
+      const rm = u.pathname.match(/^\/(r|u|user)\/([\w-]+)/i);
+      if (cm) { feed = 'https://www.reddit.com' + cm[0]; post = true; }
+      else if (rm) feed = `https://www.reddit.com/${rm[1].toLowerCase() === 'u' ? 'user' : rm[1].toLowerCase()}/${rm[2]}`;
+    }
+    if (!feed) return null;
+    const x = await fetch(feed + '.rss?limit=4', {
+      headers: { 'User-Agent': UA, Accept: 'application/atom+xml,text/xml' },
+      signal: AbortSignal.timeout(4000),
+    }).then((r) => (r.ok ? r.text() : null)).catch(() => null);
+    if (!x) return null;
+    const tag = (s, t) => (s.match(new RegExp(`<${t}[^>]*>([\\s\\S]*?)</${t}>`)) || [])[1] || '';
+    const entries = [...x.matchAll(/<entry>([\s\S]*?)<\/entry>/g)].map((m) => m[1]);
+    // a comment permalink carries a second id; its entry is t1_-tagged
+    const cid = (u.pathname.match(/\/comments\/[a-z0-9]+\/[\w-]*\/([a-z0-9]+)/i) || [])[1];
+    const entry = post && ((cid && entries.find((e) => e.includes(`<id>t1_${cid}</id>`))) || entries[0]);
+    const feedTitle = tag(x, 'title');
+    if (entry) {
+      // content holds entity-escaped html - decode first so the tag strip
+      // and image scrape see real markup
+      const dec = clean(tag(entry, 'content'), 8000);
+      const img = (dec.match(/<img[^>]+src="([^" ]+)/i) || [])[1] || '';
+      const body = clean(dec
+        .replace(/<!--[\s\S]*?-->|<[^>]+>/g, ' ')
+        .replace(/\s*(?:submitted by|\[link\])[\s\S]*/i, ''), 280);
+      return {
+        title: clean(tag(entry, 'title'), 200), description: body,
+        author: clean(tag(entry, 'name').replace(/^\//, '')),
+        published: tag(entry, 'published'), site: 'Reddit', image: img,
+      };
+    }
+    if (!feedTitle) return null;
+    return {
+      title: clean(feedTitle, 120), site: 'Reddit',
+      description: clean(tag(x, 'subtitle'), 200) || `on Reddit`,
+      facts: entries.map((e) => clean(tag(e, 'title'), 80)).filter(Boolean).slice(0, 4),
+    };
+  }],
   [/^(?:www\.)?github\.com$/, async (u) => {
     const [owner, repo] = u.pathname.split('/').filter(Boolean);
     if (!owner || !repo || /^(orgs|sponsors|topics|settings|marketplace|features)$/.test(owner)) return null;
