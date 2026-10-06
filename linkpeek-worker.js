@@ -515,7 +515,15 @@ export default {
       if (!v) return null;
       try { const i = new URL(clean(v, max), found.url); return i.protocol === 'https:' ? i.href : null; } catch { return null; }
     };
-    const title = found && (found.title || found.ldTitle || found.rawTitle);
+    // boilerplate og titles ('Home', 'Index', an echo of site_name)
+    // lose to the page's real <title> or its JSON-LD name
+    const genericT = (t) => !t || /^(home|index|welcome|main|default|untitled)$/i.test(t.trim()) ||
+      (found && found.site && t.trim().toLowerCase() === found.site.trim().toLowerCase());
+    const title = found &&
+      ((!genericT(found.title) && found.title) ||
+       (!genericT(found.ldTitle) && found.ldTitle) ||
+       (!genericT(found.rawTitle) && found.rawTitle) ||
+       found.title || found.ldTitle || found.rawTitle);
     const desc = found && (found.ogDesc || found.ldDesc || found.desc || found.description);
     const body = found && (title || desc || found.video) ? {
       title: clean(title, 200) || null,
