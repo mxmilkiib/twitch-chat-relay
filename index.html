@@ -394,7 +394,7 @@ the same <code>{type: 'stream'}</code> reports.</p>
             // external cards (youtube etc.) join the same lists
             const med = (m) => ({
               photos: ((m && m.photos) || []).map((p) => ({ url: p.url, alt: p.altText || '' })),
-              videos: ((m && m.videos) || []).map((v) => ({ url: v.url, thumb: v.thumbnail_url || '', type: v.type }))
+              videos: ((m && m.videos) || []).map((v) => ({ url: v.url, thumb: v.thumbnail_url || '', type: v.type, w: +v.width || 0, h: +v.height || 0 }))
                 .concat(m && m.external && m.external.thumbnail_url
                   ? [{ url: m.external.url || '', thumb: m.external.thumbnail_url, type: 'video' }] : []),
             });
