@@ -199,12 +199,19 @@ the same <code>{type: 'stream'}</code> reports.</p>
       const u = e.images?.['2x'] || e.images?.['1x'];
       if (u) { emotes[e.code] = u; emoteSrc[e.code] = 'FFZ animated'; emoteAnim[e.code] = true; }
     }
-    // badge set 'set_id' -> { version: url }; channel sets override globals
-    const badges = {};
-    for (const s of [...(badgesGlobal || []), ...(badgesChan || [])])
+    // badge set 'set_id' -> { version: url }; channel sets override globals.
+    // badgeInfo keeps the title/description per version for reference lists
+    const badges = {}, badgeInfo = {};
+    for (const s of [...(badgesGlobal || []), ...(badgesChan || [])]) {
       badges[s.set_id] = { ...(badges[s.set_id] || {}),
         ...Object.fromEntries((s.versions || [])
           .map((v) => [v.id, v.image_url_2x || v.image_url_1x])) };
+      badgeInfo[s.set_id] = { ...(badgeInfo[s.set_id] || {}),
+        ...Object.fromEntries((s.versions || [])
+          .map((v) => [v.id, { t: v.title || '', d: v.description || '',
+            u: v.image_url_2x || v.image_url_1x }])) };
+    }
+    const badgeChan = (badgesChan || []).map((s) => s.set_id);
     // per-emote usage counts from StreamElements' channel stats - the picker
     // sorts sections by how much each emote actually gets used in chat
     const emoteUse = {};
@@ -220,10 +227,10 @@ the same <code>{type: 'stream'}</code> reports.</p>
     // re-walk every chat row for nothing. a fresh join() makes a new peer.
     // the picker only needs the animated names, not a full bool map
     const anims = Object.keys(emoteAnim).filter((n) => emoteAnim[n]);
-    const json = JSON.stringify([emotes, emoteSrc, zeroWidth, badges, lastBroadcast, lastVod, emoteUse, anims]);
+    const json = JSON.stringify([emotes, emoteSrc, zeroWidth, badges, badgeInfo, lastBroadcast, lastVod, emoteUse, anims]);
     if (json === lastEmoteJson.get(channel)) return;
     lastEmoteJson.set(channel, json);
-    send({ type: 'emotes', channel, emotes, emoteSrc, zeroWidth, badges, lastBroadcast, lastVod, emoteUse, emoteAnim: anims });
+    send({ type: 'emotes', channel, emotes, emoteSrc, zeroWidth, badges, badgeInfo, badgeChan, lastBroadcast, lastVod, emoteUse, emoteAnim: anims });
     // the channel's own sub emotes ride a synthetic twsets message so the
     // page's merge path picks them up unasked: anonymous viewers never see
     // an emote-sets tag, so stats names like hasPog resolve to images here
