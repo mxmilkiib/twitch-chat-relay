@@ -192,7 +192,34 @@ const PROVIDERS = [
       icon: 'https://news.ycombinator.com/y18.svg',
     };
   }],
-  [/^(?:www\.)?twitch\.tv$/, async (u) => {
+  [/^(?:www\.|clips\.)?twitch\.tv$/, async (u) => {
+    // clip links - /<login>/clip/<slug> or clips.twitch.tv/<slug> - go
+    // through gql with the public web client-id; the clip page's own
+    // og tags are just the generic "Twitch" boilerplate
+    const slug = (u.pathname.match(/^\/[\w]+\/clip\/([\w-]+)/i) || [])[1] ||
+      (u.hostname.startsWith('clips.') ? (u.pathname.match(/^\/([\w-]+)/i) || [])[1] : null);
+    if (slug) {
+      const j = await fetch('https://gql.twitch.tv/gql', {
+        method: 'POST',
+        headers: { 'Client-ID': 'kimne78kx3ncx6brgo4mv6wki5h1ko', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query:
+          `{ clip(slug: "${slug.replace(/[^\w-]/g, '')}") { title broadcaster { displayName } game { name } viewCount durationSeconds createdAt thumbnailURL curator { displayName } } }` }),
+        signal: AbortSignal.timeout(6000),
+      }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+      const c = j && j.data && j.data.clip;
+      if (!c || !c.title) return { partial: true };
+      const cf = [];
+      if (c.viewCount != null) cf.push(`${abbrev(c.viewCount)} views`);
+      if (c.durationSeconds) cf.push(`${c.durationSeconds}s`);
+      if (c.game && c.game.name) cf.push(c.game.name);
+      if (c.createdAt) cf.push(rel(Date.parse(c.createdAt)));
+      return {
+        title: c.title, site: 'Twitch clip',
+        author: c.curator && c.curator.displayName ? `clipped by ${c.curator.displayName}` : null,
+        description: c.broadcaster ? c.broadcaster.displayName : '',
+        image: c.thumbnailURL, facts: cf, ttl: 0,
+      };
+    }
     const login = (u.pathname.match(/^\/([a-z0-9_]{2,25})\/?$/i) || [])[1];
     if (!login || /^(directory|videos|settings|downloads|jobs|turbo|store|p)$/i.test(login)) return null;
     const j = await getJson(`https://api.ivr.fi/v2/twitch/user?login=${login}`);
