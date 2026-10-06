@@ -58,7 +58,10 @@ the relay replies <code>{type: 'auth', login}</code> or an error.</p>
       const lines = evt.data.split('\r\n').filter(Boolean);
       for (const line of lines) {
         if (line.startsWith('PING')) ws.send('PONG :tmi.twitch.tv');
-        else if (line.includes('RECONNECT')) { ws.close(); return; }
+        // RECONNECT is a bare ':host RECONNECT' server line - a substring
+        // match would let chat text containing the word kill the socket,
+        // and the early return dropped the rest of the chunk unforwarded
+        else if (/^(?:@\S+ )?:[\w.-]+ RECONNECT$/.test(line)) ws.close();
         else if (/authentication failed|Improperly formatted auth/.test(line)) {
           auth = null;
           send({ type: 'auth', error: 'login rejected' });
