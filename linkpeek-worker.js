@@ -318,13 +318,13 @@ const PROVIDERS = [
     }
     return { partial: true, video, ttl: video ? 21600 : 0 };
   }],
-  // imgur never emits og:title (the post title is client-rendered) and
-  // its html/api are geo-blocked in some regions. the v3 api answers
-  // anonymously with a client-id header where the egress allows it, and
-  // jina's reader renders the post server-side otherwise - its title
-  // field holds "… - <topic> post" for gallery slugs while classic short
-  // links carry the title just above the [MORE TAGS] self-link in the
-  // markdown. a total miss still lands an image thumbnail card
+  // imgur's html/api are geo-blocked in some regions, and classic posts
+  // never even emit og:title - it's client-rendered. three shots at the
+  // real title: google's translate proxy serves imgur's ssr html from a
+  // us egress, the v3 api answers anonymously with a client-id header
+  // where the egress allows it, and jina's reader renders classic posts
+  // (their title sits just above the [MORE TAGS] self-link). a total
+  // miss still lands an image thumbnail card instead of "no preview"
   [/^(?:i\.|www\.|m\.)?imgur\.com$/, async (u) => {
     const id = (u.hostname === 'i.imgur.com'
       ? u.pathname.match(/^\/([\w-]{5,9})\.\w{2,4}$/)
@@ -334,6 +334,21 @@ const PROVIDERS = [
     // post and album links carry it whole
     const mid = (id.match(/([A-Za-z0-9]+)$/) || [0, id])[1];
     const img = u.hostname === 'i.imgur.com' ? u.origin + u.pathname : `https://i.imgur.com/${mid}.png`;
+    const pg = u.hostname === 'i.imgur.com' ? `https://imgur.com/${mid}` : u.origin + u.pathname;
+    const meta = {};
+    const tg = await fetchPage(new URL(
+      `https://imgur-com.translate.goog${new URL(pg).pathname}?_x_tr_sl=auto&_x_tr_tl=en&_x_tr_hl=en`)).catch(() => null);
+    if (tg && tg.res.ok && /^text\/html/i.test(tg.res.headers.get('content-type') || '')) {
+      const head = await readText(tg.res, MAX_READ, headStop()).catch(() => '');
+      await new HTMLRewriter()
+        .on('title', { text(t) { meta.rawTitle = (meta.rawTitle || '') + t.text; } })
+        .on('meta', new MetaGrab(meta))
+        .transform(new Response(head, { headers: { 'content-type': 'text/html' } }))
+        .text();
+    } else if (tg) tg.res.body && tg.res.body.cancel().catch(() => {});
+    meta.rawTitle = (meta.rawTitle || '').replace(/\s*-\s*(?:album|post|image) on imgur\s*$/i, '').trim();
+    if (meta.title || meta.rawTitle && !/^(imgur|the magic of the internet|content not available)/i.test(meta.rawTitle))
+      return { ...meta, title: meta.title || meta.rawTitle, site: 'Imgur', image: meta.image || img };
     const kinds = /^\/(?:a|gallery|g)\//i.test(u.pathname) ? ['gallery', 'album'] : ['image', 'gallery'];
     for (const kind of kinds) {
       const res = await fetch(`https://api.imgur.com/3/${kind}/${mid}`, {
@@ -351,11 +366,10 @@ const PROVIDERS = [
           views: d.views, facts: d.images && d.images.length > 1 ? [`${d.images.length} images`] : null };
       }
     }
-    let title = null;
-    const pg = u.hostname === 'i.imgur.com' ? `https://imgur.com/${mid}` : u.origin + u.pathname;
     const jr = await fetch(`https://r.jina.ai/${pg}`, {
       signal: AbortSignal.timeout(8000), headers: { Accept: 'application/json' },
     }).catch(() => null);
+    let title = null;
     if (jr && jr.ok) {
       const d = (await jr.json().catch(() => null))?.data;
       if (d) {
