@@ -87,8 +87,44 @@ function safeTarget(u) {
 const getJson = (url, init) => fetch(url, { headers: { 'User-Agent': UA, Accept: 'application/json' }, signal: AbortSignal.timeout(4000), ...init })
   .then((r) => (r.ok ? r.json() : null)).catch(() => null);
 
+// youtube's public innertube client - the same unauthenticated endpoints
+// the site itself calls; channel pages have no oembed and the consent
+// wall can swallow the plain scrape, so they resolve here instead
+const YT_KEY = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8';
+const ytApi = (ep, body) => fetch(`https://www.youtube.com/youtubei/v1/${ep}?key=${YT_KEY}`, {
+  method: 'POST',
+  signal: AbortSignal.timeout(4000),
+  headers: { 'Content-Type': 'application/json', 'User-Agent': UA },
+  body: JSON.stringify({
+    context: { client: { clientName: 'WEB', clientVersion: '2.20241126.01.00' } },
+    ...body,
+  }),
+}).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+
 const PROVIDERS = [
   [/^(?:www\.|m\.|music\.)?youtube\.com$|^youtu\.be$/, async (u) => {
+    // @handle, /channel/UC…, /c/name and /user/name pages resolve through
+    // innertube to a browseId, then the browse answer carries the card
+    const ch = u.hostname.endsWith('youtube.com') &&
+      u.pathname.match(/^\/(?:@([\w.-]+)|channel\/(UC[\w-]+)|c\/([\w.-]+)|user\/([\w.-]+))/);
+    if (ch) {
+      let bid = ch[2];
+      if (!bid) {
+        const r = await ytApi('navigation/resolve_url', { url: u.href });
+        bid = r && r.endpoint && r.endpoint.browseEndpoint && r.endpoint.browseEndpoint.browseId;
+      }
+      const b = bid && (await ytApi('browse', { browseId: bid }));
+      const meta = b && b.metadata && b.metadata.channelMetadataRenderer;
+      if (!meta) return null;
+      const av = b.header && b.header.pageHeaderRenderer && b.header.pageHeaderRenderer.content &&
+        b.header.pageHeaderRenderer.content.pageHeaderViewModel;
+      const srcs = av && av.image && av.image.decoratedAvatarViewModel &&
+        av.image.decoratedAvatarViewModel.avatar && av.image.decoratedAvatarViewModel.avatar.avatarViewModel &&
+        av.image.decoratedAvatarViewModel.avatar.avatarViewModel.image &&
+        av.image.decoratedAvatarViewModel.avatar.avatarViewModel.image.sources;
+      const image = Array.isArray(srcs) && srcs.length ? srcs[srcs.length - 1].url : '';
+      return { title: meta.title || '', description: meta.description || '', site: 'YouTube', image };
+    }
     if (u.hostname.endsWith('youtube.com') && !/^\/(watch|shorts|live|playlist)/.test(u.pathname)) return null;
     const j = await getJson(`https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(u.href)}`);
     const out = j && j.title ? { title: j.title, description: j.author_name ? `by ${j.author_name}` : '', site: 'YouTube', image: j.thumbnail_url } : null;
