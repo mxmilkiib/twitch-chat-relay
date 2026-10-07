@@ -401,6 +401,7 @@ the same <code>{type: 'stream'}</code> reports.</p>
             const mm = med(t && t.media), qm = med(t && t.quote && t.quote.media);
             send({ type: 'tweet', id: d.id, tweet: t && t.text ? {
               text: t.text,
+              ts: (+t.created_timestamp || 0) * 1000,
               author: {
                 screen_name: t.author && t.author.screen_name,
                 avatar_url: t.author && /^https:/.test(t.author.avatar_url || '') ? t.author.avatar_url : '',
