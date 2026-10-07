@@ -318,6 +318,31 @@ const PROVIDERS = [
     }
     return { partial: true, video, ttl: video ? 21600 : 0 };
   }],
+  // imgur geo-blocks its html and api in some regions entirely, but the
+  // i.imgur.com image payload still serves - so a bare image link gets
+  // its post page scraped for the real title where the block doesn't
+  // apply, and otherwise still lands a thumbnail card instead of nothing
+  [/^(?:i\.|www\.|m\.)?imgur\.com$/, async (u) => {
+    const id = (u.hostname === 'i.imgur.com'
+      ? u.pathname.match(/^\/([\w-]{5,9})\.\w{2,4}$/)
+      : u.pathname.match(/^\/([\w-]{5,9})$/) || u.pathname.match(/^\/(?:a|gallery|g)\/([\w-]+)/i) || [])[1];
+    if (!id || /^(?:topics?|t|search|about|tos|privacy|jobs|advertise|help|rules|contact|register|signin|removalrequest|uploads?|blog)$/i.test(id)) return null;
+    const got = await fetchPage(new URL(u.hostname === 'i.imgur.com' ? `https://imgur.com/${id}` : u.href)).catch(() => null);
+    const meta = {};
+    if (got && got.res.ok && /^text\/html/i.test(got.res.headers.get('content-type') || '')) {
+      const head = await readText(got.res, MAX_READ, headStop()).catch(() => '');
+      await new HTMLRewriter()
+        .on('title', { text(t) { meta.rawTitle = (meta.rawTitle || '') + t.text; } })
+        .on('meta', new MetaGrab(meta))
+        .transform(new Response(head, { headers: { 'content-type': 'text/html' } }))
+        .text();
+    } else if (got) got.res.body && got.res.body.cancel().catch(() => {});
+    const img = u.hostname === 'i.imgur.com' ? u.href : `https://i.imgur.com/${id}.png`;
+    const t = meta.title || meta.rawTitle || '';
+    if (t && !/^(imgur|content not available)/i.test(t.trim())) return { ...meta, image: meta.image || img };
+    // blocked or untitled post - the direct image at least thumbnailed
+    return { title: decodeURIComponent((u.pathname.match(/\/([\w.-]+)$/) || [])[1] || id), site: 'Imgur', image: img };
+  }],
 ];
 
 class MetaGrab {
