@@ -145,7 +145,7 @@ the same <code>{type: 'stream'}</code> reports.</p>
       method: 'POST',
       headers: { 'Client-ID': 'kimne78kx3ncx6brgo4mv6wki5h1ko', 'Content-Type': 'application/json' },
       body: JSON.stringify({ query:
-        `{ user(login: "${channel.replace(/[^a-zA-Z0-9_]/g, '')}") { videos(first: 1, type: ARCHIVE, sort: TIME) { edges { node { createdAt lengthSeconds } } } subscriptionProducts { tier emotes { id token type } } } }` }),
+        `{ user(login: "${channel.replace(/[^a-zA-Z0-9_]/g, '')}") { videos(first: 1, type: ARCHIVE, sort: TIME) { edges { node { createdAt lengthSeconds } } } subscriptionProducts { tier emotes { id token type assetType } } } }` }),
     }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
     const [stvUser, bttvUser, ffzRoom, vodResp,
            badgesChan, ffzAnim, chatStats] = await Promise.all([
@@ -237,7 +237,7 @@ the same <code>{type: 'stream'}</code> reports.</p>
     const subSets = (vodResp?.data?.user?.subscriptionProducts || [])
       .map((p) => p && p.emotes && p.emotes.length && ({
         setID: `chan-${channel}-${p.tier}`, channelLogin: channel, tier: String(+p.tier / 1000),
-        emoteList: p.emotes.map((e) => ({ code: e.token, id: e.id, type: 'SUBSCRIPTIONS' })),
+        emoteList: p.emotes.map((e) => ({ code: e.token, id: e.id, type: 'SUBSCRIPTIONS', assetType: e.assetType })),
       })).filter(Boolean);
     if (subSets.length) send({ type: 'twsets', key: '', sets: subSets });
   }
