@@ -336,8 +336,13 @@ const PROVIDERS = [
     const img = u.hostname === 'i.imgur.com' ? u.origin + u.pathname : `https://i.imgur.com/${mid}.png`;
     const pg = u.hostname === 'i.imgur.com' ? `https://imgur.com/${mid}` : u.origin + u.pathname;
     const meta = {};
-    const tg = await fetchPage(new URL(
-      `https://imgur-com.translate.goog${new URL(pg).pathname}?_x_tr_sl=auto&_x_tr_tl=en&_x_tr_hl=en`)).catch(() => null);
+    // translate.goog drops the odd request - one retry picks most up
+    let tg = null;
+    for (let tries = 0; tries < 2 && !(tg && tg.res.ok); tries++) {
+      tg = await fetchPage(new URL(
+        `https://imgur-com.translate.goog${new URL(pg).pathname}?_x_tr_sl=auto&_x_tr_tl=en&_x_tr_hl=en`)).catch(() => null);
+      if (tg && !tg.res.ok) tg.res.body && tg.res.body.cancel().catch(() => {});
+    }
     if (tg && tg.res.ok && /^text\/html/i.test(tg.res.headers.get('content-type') || '')) {
       const head = await readText(tg.res, MAX_READ, headStop()).catch(() => '');
       await new HTMLRewriter()
