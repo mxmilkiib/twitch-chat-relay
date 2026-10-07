@@ -364,10 +364,14 @@ async function fetchPage(first) {
   let u = first;
   for (let hop = 0; hop <= MAX_HOPS; hop++) {
     if (!safeTarget(u)) return null;
+    // YouTube bounces unknown agents to its consent interstitial in some
+    // regions - a SOCS cookie answers it upfront and keeps the real page
+    const yt = /(^|\.)youtube\.com$/.test(u.hostname);
     const res = await fetch(u.href, {
       redirect: 'manual',
       signal: AbortSignal.timeout(5000),
-      headers: { 'User-Agent': UA, Accept: 'text/html,application/xhtml+xml' },
+      headers: { 'User-Agent': UA, Accept: 'text/html,application/xhtml+xml',
+        ...(yt ? { Cookie: 'SOCS=CAE' } : {}) },
     });
     const loc = res.status >= 300 && res.status < 400 && res.headers.get('location');
     if (!loc) return { res, url: u };
