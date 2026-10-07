@@ -100,7 +100,9 @@ on this page it lives in localStorage until logout.)
 `<head>` (further, to 128 KB, when the head has no og:title or JSON-LD),
 and has dedicated lookups for YouTube, GitHub, Wikipedia, Hacker News
 items (via the official firebase api - HN itself refuses datacentre
-fetches), Twitch channel links and Instagram reels (a playable mp4
+fetches), Twitch channel links, Imgur posts (the real post title via
+google's translate proxy, falling back to the image thumbnail card)
+and Instagram reels (a playable mp4
 resolved through kkclip on top of the reel page's own og: data). Twitch answers carry extra fact
 chips from ivr.fi - live status, followers, chatters, account age,
 role, and the channel's chat modes - and flag a short ttl while the
