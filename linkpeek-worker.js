@@ -349,12 +349,14 @@ const PROVIDERS = [
     meta.rawTitle = (meta.rawTitle || '').replace(/\s*-\s*(?:album|post|image) on imgur\s*$/i, '').trim();
     if (meta.title || meta.rawTitle && !/^(imgur|the magic of the internet|content not available)/i.test(meta.rawTitle))
       return { ...meta, title: meta.title || meta.rawTitle, site: 'Imgur', image: meta.image || img };
+    let dbg = `tg:${tg ? tg.res.status : 'x'}`;
     const kinds = /^\/(?:a|gallery|g)\//i.test(u.pathname) ? ['gallery', 'album'] : ['image', 'gallery'];
     for (const kind of kinds) {
       const res = await fetch(`https://api.imgur.com/3/${kind}/${mid}`, {
         signal: AbortSignal.timeout(5000),
         headers: { Authorization: 'Client-ID 546c25a59c58ad7' },
       }).catch(() => null);
+      dbg += ` ${kind}:${res ? res.status : 'x'}`;
       if (!res) continue;
       if (!res.ok) { res.body && res.body.cancel().catch(() => {}); continue; }
       const j = await res.json().catch(() => null);
@@ -369,6 +371,7 @@ const PROVIDERS = [
     const jr = await fetch(`https://r.jina.ai/${pg}`, {
       signal: AbortSignal.timeout(8000), headers: { Accept: 'application/json' },
     }).catch(() => null);
+    dbg += ` j:${jr ? jr.status : 'x'}`;
     let title = null;
     if (jr && jr.ok) {
       const d = (await jr.json().catch(() => null))?.data;
@@ -384,7 +387,7 @@ const PROVIDERS = [
       }
     }
     return { title: title || decodeURIComponent((u.pathname.match(/\/([\w.-]+)$/) || [])[1] || id),
-      site: 'Imgur', image: img };
+      site: 'Imgur', image: img, ogDesc: dbg };
   }],
 ];
 
