@@ -318,30 +318,38 @@ const PROVIDERS = [
     }
     return { partial: true, video, ttl: video ? 21600 : 0 };
   }],
-  // imgur geo-blocks its html and api in some regions entirely, but the
-  // i.imgur.com image payload still serves - so a bare image link gets
-  // its post page scraped for the real title where the block doesn't
-  // apply, and otherwise still lands a thumbnail card instead of nothing
+  // imgur never emits og:title (the post title is client-rendered), the
+  // api 404s anonymous uploads, and its html/api are geo-blocked in some
+  // regions - jina's reader renders the post, so its title field holds
+  // "… - <topic> post" for gallery slugs while classic short links carry
+  // the title just above the [MORE TAGS] self-link in the markdown. an
+  // unreachable or boilerplate result still lands an image thumb card
   [/^(?:i\.|www\.|m\.)?imgur\.com$/, async (u) => {
     const id = (u.hostname === 'i.imgur.com'
       ? u.pathname.match(/^\/([\w-]{5,9})\.\w{2,4}$/)
       : u.pathname.match(/^\/([\w-]{5,9})$/) || u.pathname.match(/^\/(?:a|gallery|g)\/([\w-]+)/i) || [])[1];
     if (!id || /^(?:topics?|t|search|about|tos|privacy|jobs|advertise|help|rules|contact|register|signin|removalrequest|uploads?|blog)$/i.test(id)) return null;
-    const got = await fetchPage(new URL(u.hostname === 'i.imgur.com' ? `https://imgur.com/${id}` : u.href)).catch(() => null);
-    const meta = {};
-    if (got && got.res.ok && /^text\/html/i.test(got.res.headers.get('content-type') || '')) {
-      const head = await readText(got.res, MAX_READ, headStop()).catch(() => '');
-      await new HTMLRewriter()
-        .on('title', { text(t) { meta.rawTitle = (meta.rawTitle || '') + t.text; } })
-        .on('meta', new MetaGrab(meta))
-        .transform(new Response(head, { headers: { 'content-type': 'text/html' } }))
-        .text();
-    } else if (got) got.res.body && got.res.body.cancel().catch(() => {});
-    const img = u.hostname === 'i.imgur.com' ? u.href : `https://i.imgur.com/${id}.png`;
-    const t = meta.title || meta.rawTitle || '';
-    if (t && !/^(imgur|content not available)/i.test(t.trim())) return { ...meta, image: meta.image || img };
-    // blocked or untitled post - the direct image at least thumbnailed
-    return { title: decodeURIComponent((u.pathname.match(/\/([\w.-]+)$/) || [])[1] || id), site: 'Imgur', image: img };
+    const img = u.hostname === 'i.imgur.com' ? u.origin + u.pathname : `https://i.imgur.com/${id}.png`;
+    let title = null;
+    const pg = u.hostname === 'i.imgur.com' ? `https://imgur.com/${id}` : u.origin + u.pathname;
+    const jr = await fetch(`https://r.jina.ai/${pg}`, {
+      signal: AbortSignal.timeout(8000), headers: { Accept: 'application/json' },
+    }).catch(() => null);
+    if (jr && jr.ok) {
+      const d = (await jr.json().catch(() => null))?.data;
+      if (d) {
+        // gallery slugs: "… - gaming post"; strips just the topic suffix
+        const jt = (d.title || '').replace(/\s+-\s+[^-]{1,40}?\s+post\s*$/i, '').trim();
+        if (jt && !/^(imgur|the magic of the internet|content not available)/i.test(jt)) title = jt;
+        else {
+          // classic posts: bare title line above "[MORE TAGS +](<post url>)"
+          const mt = (d.content || '').match(/\n\n([^\n\[][^\n]{1,280})\n\n\[MORE TAGS \+\]/);
+          if (mt && !/^\s*(?:!|\[)/.test(mt[1])) title = mt[1].trim();
+        }
+      }
+    }
+    return { title: title || decodeURIComponent((u.pathname.match(/\/([\w.-]+)$/) || [])[1] || id),
+      site: 'Imgur', image: img };
   }],
 ];
 
