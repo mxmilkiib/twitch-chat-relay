@@ -318,12 +318,13 @@ const PROVIDERS = [
     }
     return { partial: true, video, ttl: video ? 21600 : 0 };
   }],
-  // imgur never emits og:title (the post title is client-rendered), the
-  // api 404s anonymous uploads, and its html/api are geo-blocked in some
-  // regions - jina's reader renders the post, so its title field holds
-  // "… - <topic> post" for gallery slugs while classic short links carry
-  // the title just above the [MORE TAGS] self-link in the markdown. an
-  // unreachable or boilerplate result still lands an image thumb card
+  // imgur never emits og:title (the post title is client-rendered) and
+  // its html/api are geo-blocked in some regions. the v3 api answers
+  // anonymously with a client-id header where the egress allows it, and
+  // jina's reader renders the post server-side otherwise - its title
+  // field holds "… - <topic> post" for gallery slugs while classic short
+  // links carry the title just above the [MORE TAGS] self-link in the
+  // markdown. a total miss still lands an image thumbnail card
   [/^(?:i\.|www\.|m\.)?imgur\.com$/, async (u) => {
     const id = (u.hostname === 'i.imgur.com'
       ? u.pathname.match(/^\/([\w-]{5,9})\.\w{2,4}$/)
@@ -331,16 +332,30 @@ const PROVIDERS = [
     if (!id || /^(?:topics?|t|search|about|tos|privacy|jobs|advertise|help|rules|contact|register|signin|removalrequest|uploads?|blog)$/i.test(id)) return null;
     // slugged gallery urls end in the media id (abc-def-XYZ1234); plain
     // post and album links carry it whole
-    const img = u.hostname === 'i.imgur.com' ? u.origin + u.pathname
-      : `https://i.imgur.com/${(id.match(/([A-Za-z0-9]+)$/) || [0, id])[1]}.png`;
-    let title = null;
-    const pg = u.hostname === 'i.imgur.com' ? `https://imgur.com/${id}` : u.origin + u.pathname;
-    let jr = null;
-    for (let tries = 0; tries < 2 && !(jr && jr.ok); tries++) {
-      jr = await fetch(`https://r.jina.ai/${pg}`, {
-        signal: AbortSignal.timeout(8000), headers: { Accept: 'application/json' },
+    const mid = (id.match(/([A-Za-z0-9]+)$/) || [0, id])[1];
+    const img = u.hostname === 'i.imgur.com' ? u.origin + u.pathname : `https://i.imgur.com/${mid}.png`;
+    const kinds = /^\/(?:a|gallery|g)\//i.test(u.pathname) ? ['gallery', 'album'] : ['image', 'gallery'];
+    for (const kind of kinds) {
+      const res = await fetch(`https://api.imgur.com/3/${kind}/${mid}`, {
+        signal: AbortSignal.timeout(5000),
+        headers: { Authorization: 'Client-ID 546c25a59c58ad7' },
       }).catch(() => null);
+      if (!res) continue;
+      if (!res.ok) { res.body && res.body.cancel().catch(() => {}); continue; }
+      const j = await res.json().catch(() => null);
+      if (j && j.success && j.data) {
+        const d = j.data;
+        const media = (d.images && d.images[0] && d.images[0].link) || d.link;
+        return { title: d.title, ogDesc: d.description, site: 'Imgur', image: media || img,
+          author: d.account_url, published: d.datetime ? new Date(d.datetime * 1000).toISOString() : null,
+          views: d.views, facts: d.images && d.images.length > 1 ? [`${d.images.length} images`] : null };
+      }
     }
+    let title = null;
+    const pg = u.hostname === 'i.imgur.com' ? `https://imgur.com/${mid}` : u.origin + u.pathname;
+    const jr = await fetch(`https://r.jina.ai/${pg}`, {
+      signal: AbortSignal.timeout(8000), headers: { Accept: 'application/json' },
+    }).catch(() => null);
     if (jr && jr.ok) {
       const d = (await jr.json().catch(() => null))?.data;
       if (d) {
@@ -350,7 +365,7 @@ const PROVIDERS = [
         else {
           // classic posts: bare title line above "[MORE TAGS +](<post url>)"
           const mt = (d.content || '').match(/\n\n([^\n\[][^\n]{1,280})\n\n\[MORE TAGS \+\]/);
-          if (mt && !/^\s*(?:!|\[)/.test(mt[1])) title = mt[1].trim();
+          if (mt) title = mt[1].trim();
         }
       }
     }
