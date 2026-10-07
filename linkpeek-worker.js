@@ -329,12 +329,18 @@ const PROVIDERS = [
       ? u.pathname.match(/^\/([\w-]{5,9})\.\w{2,4}$/)
       : u.pathname.match(/^\/([\w-]{5,9})$/) || u.pathname.match(/^\/(?:a|gallery|g)\/([\w-]+)/i) || [])[1];
     if (!id || /^(?:topics?|t|search|about|tos|privacy|jobs|advertise|help|rules|contact|register|signin|removalrequest|uploads?|blog)$/i.test(id)) return null;
-    const img = u.hostname === 'i.imgur.com' ? u.origin + u.pathname : `https://i.imgur.com/${id}.png`;
+    // slugged gallery urls end in the media id (abc-def-XYZ1234); plain
+    // post and album links carry it whole
+    const img = u.hostname === 'i.imgur.com' ? u.origin + u.pathname
+      : `https://i.imgur.com/${(id.match(/([A-Za-z0-9]+)$/) || [0, id])[1]}.png`;
     let title = null;
     const pg = u.hostname === 'i.imgur.com' ? `https://imgur.com/${id}` : u.origin + u.pathname;
-    const jr = await fetch(`https://r.jina.ai/${pg}`, {
-      signal: AbortSignal.timeout(8000), headers: { Accept: 'application/json' },
-    }).catch(() => null);
+    let jr = null;
+    for (let tries = 0; tries < 2 && !(jr && jr.ok); tries++) {
+      jr = await fetch(`https://r.jina.ai/${pg}`, {
+        signal: AbortSignal.timeout(8000), headers: { Accept: 'application/json' },
+      }).catch(() => null);
+    }
     if (jr && jr.ok) {
       const d = (await jr.json().catch(() => null))?.data;
       if (d) {
