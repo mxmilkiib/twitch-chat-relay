@@ -634,6 +634,21 @@ async function giphy(q, safe, origin, ctx, request) {
   return out;
 }
 
+// instance pings: the relay page sends ?ping=<rand> on load and every few
+// minutes while alive - counting live ids per window gives a rough
+// concurrent-viewer figure. per-isolate memory, so it undercounts when
+// traffic spreads across edge nodes; a baseline, not an audit
+const seen = new Map();
+const SEEN_KEEP = 36e5; // an id older than an hour can't be alive anyway
+function notePing(id) {
+  seen.set(id, Date.now());
+  if (seen.size > 20000) {
+    const cut = Date.now() - SEEN_KEEP;
+    for (const [k, t] of seen) if (t < cut) seen.delete(k);
+    while (seen.size > 20000) seen.delete(seen.keys().next().value);
+  }
+}
+
 export default {
   async fetch(request, env, ctx) {
     const origin = request.headers.get('Origin') || '';
@@ -642,6 +657,21 @@ export default {
     if (request.method !== 'GET') return reply({ error: 'method not allowed' }, origin, 405, TTL_FAIL);
 
     const self = new URL(request.url);
+    const ping = self.searchParams.get('ping');
+    if (ping !== null) {
+      if (/^[a-z0-9]{4,24}$/i.test(ping)) notePing(ping);
+      return reply({ ok: true }, origin, 200, TTL_FAIL);
+    }
+    if (self.searchParams.has('viewers')) {
+      const now = Date.now(), out = {};
+      for (const m of [5, 15, 60]) {
+        const cut = now - m * 6e4;
+        let n = 0;
+        for (const t of seen.values()) if (t > cut) n++;
+        out[m + 'm'] = n;
+      }
+      return reply(out, origin, 200, TTL_FAIL);
+    }
     const gq = self.searchParams.get('giphy');
     if (gq !== null)
       return giphy(gq, self.searchParams.get('safe') === '1', origin, ctx, request);

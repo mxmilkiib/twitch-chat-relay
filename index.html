@@ -343,6 +343,14 @@ the same <code>{type: 'stream'}</code> reports.</p>
     if (lines.length) send({ type: 'lines', lines, replay: true });
   }
 
+  // instance ping: a random per-load id re-sent every few minutes while
+  // the relay lives - the worker counts live ids as a rough viewer count.
+  // a suspended iframe stops pinging, so the count tracks "alive now"
+  const pingId = Math.random().toString(36).slice(2, 14);
+  const pingWorker = () => fetch(`${PEEK_URL}?ping=${pingId}`).catch(() => {});
+  pingWorker();
+  setInterval(pingWorker, 5 * 60e3);
+
   window.addEventListener('message', (event) => {
     const d = event.data;
     if (!d) return;
