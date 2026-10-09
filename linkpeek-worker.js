@@ -600,6 +600,38 @@ function ipOk(ip) {
   return ++e.n <= 30;
 }
 
+// GET /?giphy=<query>&safe=1 - one giphy search, cached at the edge so
+// every client's repeat of a title lands on the same stored answer.
+// the key lives here now - it no longer ships in the relay page source
+const GIPHY_KEY = 'QHi4vLaXUrzGCBFLNdkeEiu2bl7MKVHs';
+const TTL_GIF_MISS = 3600; // an hour - a dead title may gain a gif later
+async function giphy(q, safe, origin, ctx, request) {
+  q = q.slice(0, 200).trim();
+  if (!q) return reply({ error: 'empty query' }, origin, 400, TTL_FAIL);
+  const key = new Request(`https://peek.local/?giphy=${encodeURIComponent(q)}&safe=${safe ? 1 : 0}`);
+  const cache = caches.default;
+  const hit = await cache.match(key);
+  if (hit) return new Response(hit.body, { status: hit.status, headers: {
+    ...corsFor(origin), 'Content-Type': 'application/json', 'Cache-Control': hit.headers.get('Cache-Control') || '' } });
+  if (!ipOk(request.headers.get('CF-Connecting-IP')))
+    return reply({ error: 'rate limited' }, origin, 429, TTL_FAIL);
+  const j = await fetch(
+    `https://api.giphy.com/v1/gifs/search?api_key=${GIPHY_KEY}&limit=1${safe ? '&rating=pg-13' : ''}&q=${encodeURIComponent(q)}`,
+    { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(5000) })
+    .then((r) => (r.status === 429 ? { limited: true } : r.ok ? r.json() : null))
+    .catch(() => null);
+  if (j && j.limited) return reply({ limited: true }, origin, 200, TTL_FAIL);
+  const g = j && j.data && j.data[0];
+  const im = g && g.images && (g.images.fixed_height || g.images.original);
+  const body = {
+    url: im && /^https:\/\/media\d*\.giphy\.com\//.test(im.url || '') ? im.url : null,
+    page: g && /^https:\/\/giphy\.com\//.test(g.url || '') ? g.url : null,
+  };
+  const out = reply(body, origin, 200, body.url ? TTL_OK : TTL_GIF_MISS);
+  ctx.waitUntil(cache.put(key, out.clone()));
+  return out;
+}
+
 export default {
   async fetch(request, env, ctx) {
     const origin = request.headers.get('Origin') || '';
@@ -608,6 +640,9 @@ export default {
     if (request.method !== 'GET') return reply({ error: 'method not allowed' }, origin, 405, TTL_FAIL);
 
     const self = new URL(request.url);
+    const gq = self.searchParams.get('giphy');
+    if (gq !== null)
+      return giphy(gq, self.searchParams.get('safe') === '1', origin, ctx, request);
     const raw = self.searchParams.get('url') || '';
     let target;
     try { target = new URL(raw); } catch { return reply({ error: 'bad url' }, origin, 400, TTL_FAIL); }
