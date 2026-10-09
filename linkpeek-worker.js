@@ -651,7 +651,7 @@ export default {
       if (/^[a-z0-9]{4,24}$/i.test(ping)) {
         if (env.PINGS) env.PINGS.writeDataPoint({ blobs: [ping] });
         // raw archive copy - the VPS log keeps pings past AE's 92-day cap
-        ctx.waitUntil(fetch('https://orange.thingsandstuff.org/presence?id=' + ping)
+        ctx.waitUntil(fetch('https://orange.thingsandstuff.org/use?id=' + ping)
           .catch(() => {}));
       }
       return reply({ ok: true }, origin, 200, TTL_FAIL);
