@@ -7,4 +7,4 @@ workers_dev = true
 # traffic shards across nodes; the dataset is global
 [[analytics_engine_datasets]]
 binding = "PINGS"
-dataset = "hasanabi_pings"
+dataset = "hasanabi-chat-thing_use"
