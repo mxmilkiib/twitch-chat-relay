@@ -659,7 +659,12 @@ export default {
     const self = new URL(request.url);
     const ping = self.searchParams.get('ping');
     if (ping !== null) {
-      if (/^[a-z0-9]{4,24}$/i.test(ping)) notePing(ping);
+      if (/^[a-z0-9]{4,24}$/i.test(ping)) {
+        notePing(ping);
+        // persistent copy - `seen` above still serves ?viewers instantly,
+        // the dataset answers accurate unique-id windows via GraphQL
+        if (env.PINGS) env.PINGS.writeDataPoint({ blobs: [ping] });
+      }
       return reply({ ok: true }, origin, 200, TTL_FAIL);
     }
     if (self.searchParams.has('viewers')) {

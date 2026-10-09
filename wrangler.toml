@@ -2,3 +2,9 @@ name = "hasanabi-chat-thing-linkpeek"
 main = "linkpeek-worker.js"
 compatibility_date = "2026-01-01"
 workers_dev = true
+
+# presence pings persist here - the in-isolate `seen` map undercounts when
+# traffic shards across nodes; the dataset is global
+[[analytics_engine_datasets]]
+binding = "PINGS"
+dataset = "hasanabi_pings"
