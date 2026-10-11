@@ -629,7 +629,36 @@ async function giphy(q, safe, origin, ctx, request) {
     url: im && /^https:\/\/media\d*\.giphy\.com\//.test(im.url || '') ? im.url : null,
     page: g && /^https:\/\/giphy\.com\//.test(g.url || '') ? g.url : null,
   };
+  // the bytes ride the worker too: one upstream fetch per gif per colo,
+  // and clients never touch giphy's cdn themselves
+  if (body.url) body.img = `${new URL(request.url).origin}/?gimg=${encodeURIComponent(body.url)}`;
   const out = reply(body, origin, 200, body.url ? TTL_GIF : TTL_GIF_MISS);
+  ctx.waitUntil(cache.put(key, out.clone()));
+  return out;
+}
+
+// GET /?gimg=<media.giphy.com url> - the gif itself, fetched once and
+// edge-cached for a month. <img> requests carry no Origin, so this route
+// skips the ALLOWED gate; the strict host check keeps it a giphy-only
+// pipe, nothing else can ride through it
+async function gimg(raw, origin, ctx) {
+  const key = new Request(`https://peek.local/?gimg=${encodeURIComponent(raw)}`);
+  const cache = caches.default;
+  const hit = await cache.match(key);
+  if (hit) return new Response(hit.body, { status: hit.status, headers: {
+    ...corsFor(origin), 'Content-Type': hit.headers.get('Content-Type') || 'image/gif',
+    'Cache-Control': hit.headers.get('Cache-Control') || '' } });
+  if (raw.length > MAX_URL || !/^https:\/\/media\d*\.giphy\.com\/\S+$/.test(raw))
+    return reply({ error: 'bad gif url' }, origin, 400, TTL_FAIL);
+  const res = await fetch(raw, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(8000) })
+    .catch(() => null);
+  if (!res || !res.ok)
+    return reply({ error: 'no gif' }, origin, res && res.status === 429 ? 429 : 404, TTL_FAIL);
+  const out = new Response(res.body, { status: 200, headers: {
+    ...corsFor(origin),
+    'Content-Type': res.headers.get('Content-Type') || 'image/gif',
+    'Cache-Control': `public, max-age=${TTL_GIF}`,
+  } });
   ctx.waitUntil(cache.put(key, out.clone()));
   return out;
 }
@@ -641,11 +670,14 @@ async function giphy(q, safe, origin, ctx, request) {
 export default {
   async fetch(request, env, ctx) {
     const origin = request.headers.get('Origin') || '';
-    if (!ALLOWED.includes(origin)) return new Response('forbidden', { status: 403 });
+    const self = new URL(request.url);
+    // <img> fetches send no Origin - the giphy-bytes proxy stays open and
+    // relies on its strict host check instead
+    if (!ALLOWED.includes(origin) && self.searchParams.get('gimg') === null)
+      return new Response('forbidden', { status: 403 });
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsFor(origin) });
     if (request.method !== 'GET') return reply({ error: 'method not allowed' }, origin, 405, TTL_FAIL);
 
-    const self = new URL(request.url);
     const ping = self.searchParams.get('ping');
     if (ping !== null) {
       if (/^[a-z0-9]{4,24}$/i.test(ping)) {
@@ -659,6 +691,8 @@ export default {
     const gq = self.searchParams.get('giphy');
     if (gq !== null)
       return giphy(gq, self.searchParams.get('safe') === '1', origin, ctx, request);
+    const gi = self.searchParams.get('gimg');
+    if (gi !== null) return gimg(gi, origin, ctx);
     const raw = self.searchParams.get('url') || '';
     let target;
     try { target = new URL(raw); } catch { return reply({ error: 'bad url' }, origin, 400, TTL_FAIL); }

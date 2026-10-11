@@ -459,7 +459,8 @@ the same <code>{type: 'stream'}</code> reports.</p>
     }
     // native gif posts carry only the giphy title: the worker searches
     // giphy and edge-caches each query, so a title repeated across
-    // clients costs one upstream call a day (an hour for misses)
+    // clients costs one upstream call a day (an hour for misses); img
+    // carries the same gif through the worker's own cache
     if (d.type === 'giphy') {
       if (peer && event.source === peer.source && event.origin === peer.origin
           && typeof d.q === 'string' && d.q.length > 0 && d.q.length <= 120) {
@@ -468,7 +469,8 @@ the same <code>{type: 'stream'}</code> reports.</p>
           .then((r) => (r.ok ? r.json() : null))
           .then((j) => {
             if (j && j.limited) return send({ type: 'giphy', q: d.q, limited: true });
-            send({ type: 'giphy', q: d.q, url: j ? j.url : null, page: j ? j.page : null });
+            send({ type: 'giphy', q: d.q, url: j ? j.url : null, page: j ? j.page : null,
+              img: j ? j.img : null });
           })
           .catch(() => send({ type: 'giphy', q: d.q, url: null, page: null }));
       }
