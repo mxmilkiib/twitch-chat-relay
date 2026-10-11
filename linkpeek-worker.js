@@ -604,9 +604,48 @@ function ipOk(ip) {
 // every client's repeat of a title lands on the same stored answer.
 // the key lives here now - it no longer ships in the relay page source
 const GIPHY_KEY = 'QHi4vLaXUrzGCBFLNdkeEiu2bl7MKVHs';
-// gif urls are stable - a hit lasts a month; a dead title only re-asks
-// daily, in case one gains a gif later
-const TTL_GIF = 2592000, TTL_GIF_MISS = 86400;
+// gif urls are stable - a hit rests ninety days; a dead title only
+// re-asks daily, in case one gains a gif later
+const TTL_GIF = 7776000, TTL_GIF_MISS = 86400;
+const gifFetch = (q, safe) => fetch(
+  `https://api.giphy.com/v1/gifs/search?api_key=${GIPHY_KEY}&limit=1${safe ? '&rating=pg-13' : ''}&q=${encodeURIComponent(q)}`,
+  { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(5000) })
+  .then((r) => (r.status === 429 ? { limited: true } : r.ok ? r.json() : null))
+  .catch(() => null);
+// searches refused on giphy's hourly cap queue in GIFKV as {k: kvKey,
+// n: tries}; each upstream call that does get through drains one, so
+// retries only ever spend quota that has already reset - and only while
+// chat is asking anyway. kvKey keeps the safe flag and the lowered query,
+// which is all the retry needs
+const GIF_BACKLOG = 'backlog';
+const GIF_BACKLOG_MAX = 200, GIF_BACKLOG_TRIES = 4;
+async function gifMissLog(kv, kvKey) {
+  const list = (await kv.get(GIF_BACKLOG, 'json').catch(() => null)) || [];
+  if (list.some((e) => e && e.k === kvKey)) return;
+  list.push({ k: kvKey, n: 0 });
+  await kv.put(GIF_BACKLOG, JSON.stringify(list.slice(-GIF_BACKLOG_MAX))).catch(() => {});
+}
+async function gifBacklogDrain(kv) {
+  const list = await kv.get(GIF_BACKLOG, 'json').catch(() => null);
+  if (!Array.isArray(list) || !list.length) return;
+  const head = list[0], rest = list.slice(1);
+  if (!head || typeof head.k !== 'string' || head.k[0] !== 'g') {
+    await kv.put(GIF_BACKLOG, JSON.stringify(rest)).catch(() => {});
+    return;
+  }
+  const j = await gifFetch(head.k.slice(3), head.k[1] === '1');
+  if (j && j.limited) return; // still capped - the queue waits
+  // a dead upstream retry rotates to the tail a few times, then drops
+  if (!j && ++head.n < GIF_BACKLOG_TRIES) rest.push(head);
+  await kv.put(GIF_BACKLOG, JSON.stringify(rest)).catch(() => {});
+  if (!j) return;
+  const g = j.data && j.data[0];
+  const im = g && g.images && (g.images.fixed_height || g.images.original);
+  const url = im && /^https:\/\/media\d*\.giphy\.com\//.test(im.url || '') ? im.url : null;
+  const page = g && /^https:\/\/giphy\.com\//.test(g.url || '') ? g.url : null;
+  await kv.put(head.k, JSON.stringify({ url, page }),
+    { expirationTtl: url ? TTL_GIF : TTL_GIF_MISS }).catch(() => {});
+}
 async function giphy(q, safe, origin, ctx, request, env) {
   q = q.slice(0, 200).trim();
   if (!q) return reply({ error: 'empty query' }, origin, 400, TTL_FAIL);
@@ -630,12 +669,13 @@ async function giphy(q, safe, origin, ctx, request, env) {
   }
   if (!ipOk(request.headers.get('CF-Connecting-IP')))
     return reply({ error: 'rate limited' }, origin, 429, TTL_FAIL);
-  const j = await fetch(
-    `https://api.giphy.com/v1/gifs/search?api_key=${GIPHY_KEY}&limit=1${safe ? '&rating=pg-13' : ''}&q=${encodeURIComponent(q)}`,
-    { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(5000) })
-    .then((r) => (r.status === 429 ? { limited: true } : r.ok ? r.json() : null))
-    .catch(() => null);
-  if (j && j.limited) return reply({ limited: true }, origin, 200, TTL_FAIL);
+  const j = await gifFetch(q, safe);
+  if (j && j.limited) {
+    // remember the query - once the cap resets, a later call pulls the
+    // answer into GIFKV and this search starts hitting cache instead
+    if (env.GIFKV) ctx.waitUntil(gifMissLog(env.GIFKV, kvKey));
+    return reply({ limited: true }, origin, 200, TTL_FAIL);
+  }
   const g = j && j.data && j.data[0];
   const im = g && g.images && (g.images.fixed_height || g.images.original);
   const body = {
@@ -647,11 +687,13 @@ async function giphy(q, safe, origin, ctx, request, env) {
   if (body.url) body.img = `${new URL(request.url).origin}/?gimg=${encodeURIComponent(body.url)}`;
   const out = reply(body, origin, 200, body.url ? TTL_GIF : TTL_GIF_MISS);
   ctx.waitUntil(cache.put(key, out.clone()));
-  // hits rest for a month, misses for a day; a limited upstream never
+  // hits rest ninety days, misses for a day; a limited upstream never
   // lands here - transient by nature, nothing to remember
   if (env.GIFKV) ctx.waitUntil(env.GIFKV.put(kvKey,
     JSON.stringify({ url: body.url, page: body.page }),
     { expirationTtl: body.url ? TTL_GIF : TTL_GIF_MISS }));
+  // upstream answered, so the cap has headroom - drain one queued miss
+  if (j && env.GIFKV) ctx.waitUntil(gifBacklogDrain(env.GIFKV));
   return out;
 }
 
