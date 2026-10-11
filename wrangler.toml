@@ -8,3 +8,11 @@ workers_dev = true
 [[analytics_engine_datasets]]
 binding = "PINGS"
 dataset = "hasanabi_chat_thing_use"
+
+# global giphy result store - unlike the per-colo edge cache, one
+# viewer's upstream hit serves every viewer until the entry's ttl lapses.
+# create it once, then uncomment and paste the id it prints:
+#   npx wrangler kv namespace create GIFKV
+# [[kv_namespaces]]
+# binding = "GIFKV"
+# id = "PASTE_ID_HERE"

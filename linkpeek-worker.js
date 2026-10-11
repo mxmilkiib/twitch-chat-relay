@@ -607,7 +607,7 @@ const GIPHY_KEY = 'QHi4vLaXUrzGCBFLNdkeEiu2bl7MKVHs';
 // gif urls are stable - a hit lasts a month; a dead title only re-asks
 // daily, in case one gains a gif later
 const TTL_GIF = 2592000, TTL_GIF_MISS = 86400;
-async function giphy(q, safe, origin, ctx, request) {
+async function giphy(q, safe, origin, ctx, request, env) {
   q = q.slice(0, 200).trim();
   if (!q) return reply({ error: 'empty query' }, origin, 400, TTL_FAIL);
   const key = new Request(`https://peek.local/?giphy=${encodeURIComponent(q)}&safe=${safe ? 1 : 0}`);
@@ -615,6 +615,19 @@ async function giphy(q, safe, origin, ctx, request) {
   const hit = await cache.match(key);
   if (hit) return new Response(hit.body, { status: hit.status, headers: {
     ...corsFor(origin), 'Content-Type': 'application/json', 'Cache-Control': hit.headers.get('Cache-Control') || '' } });
+  // GIFKV is the shared store: the edge cache is per-colo, but one
+  // viewer's upstream hit here serves every viewer in every colo until
+  // the entry's own ttl lapses - this is what stretches the api key's
+  // hourly allowance over a whole audience
+  const kvKey = `g${safe ? 1 : 0}|${q.toLowerCase()}`;
+  const kv = env.GIFKV && await env.GIFKV.get(kvKey, 'json').catch(() => null);
+  if (kv) {
+    const body = { url: kv.url || null, page: kv.page || null };
+    if (body.url) body.img = `${new URL(request.url).origin}/?gimg=${encodeURIComponent(body.url)}`;
+    const out = reply(body, origin, 200, body.url ? TTL_GIF : TTL_GIF_MISS);
+    ctx.waitUntil(cache.put(key, out.clone()));
+    return out;
+  }
   if (!ipOk(request.headers.get('CF-Connecting-IP')))
     return reply({ error: 'rate limited' }, origin, 429, TTL_FAIL);
   const j = await fetch(
@@ -634,6 +647,11 @@ async function giphy(q, safe, origin, ctx, request) {
   if (body.url) body.img = `${new URL(request.url).origin}/?gimg=${encodeURIComponent(body.url)}`;
   const out = reply(body, origin, 200, body.url ? TTL_GIF : TTL_GIF_MISS);
   ctx.waitUntil(cache.put(key, out.clone()));
+  // hits rest for a month, misses for a day; a limited upstream never
+  // lands here - transient by nature, nothing to remember
+  if (env.GIFKV) ctx.waitUntil(env.GIFKV.put(kvKey,
+    JSON.stringify({ url: body.url, page: body.page }),
+    { expirationTtl: body.url ? TTL_GIF : TTL_GIF_MISS }));
   return out;
 }
 
@@ -690,7 +708,7 @@ export default {
     }
     const gq = self.searchParams.get('giphy');
     if (gq !== null)
-      return giphy(gq, self.searchParams.get('safe') === '1', origin, ctx, request);
+      return giphy(gq, self.searchParams.get('safe') === '1', origin, ctx, request, env);
     const gi = self.searchParams.get('gimg');
     if (gi !== null) return gimg(gi, origin, ctx);
     const raw = self.searchParams.get('url') || '';
