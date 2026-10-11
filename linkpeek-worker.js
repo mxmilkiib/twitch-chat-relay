@@ -313,7 +313,9 @@ const PROVIDERS = [
     if (res.status >= 300 && res.status < 400) {
       try {
         const v = new URL(loc);
-        if (v.protocol === 'https:' && /(^|\.)cdninstagram\.com$/.test(v.hostname)) video = v.href;
+        // kkclip 302s to the signed mp4 on fb's cdn - cdninstagram.com for
+        // the og poster, instagram.*.fna.fbcdn.net for the video itself
+        if (v.protocol === 'https:' && /(^|\.)(?:cdninstagram\.com|fbcdn\.net)$/.test(v.hostname)) video = v.href;
       } catch { /* not a media redirect */ }
     }
     return { partial: true, video, ttl: video ? 21600 : 0 };
