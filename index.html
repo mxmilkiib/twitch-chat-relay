@@ -269,40 +269,61 @@ the same <code>{type: 'stream'}</code> reports.</p>
     if (ws) ws.close(); // reconnect logs in as the user and re-joins
   }
 
-  // ---- nitter instance selection via status.d420.de ----
-  // The tracker lists live nitter hosts with health and response-time
-  // columns; the fastest healthy host is forwarded so the embedder's
-  // twitter/x links land on a working mirror instead of a stale one.
+  // ---- nitter instance selection ----
+  // Public instances die and wall constantly, so a candidate list is
+  // probed through the linkpeek worker (server-side, no CORS): a live
+  // nitter answers the profile scrape with site 'Nitter' and a
+  // 'name (@user)' title, while challenge walls and parked pages don't.
+  // The probed user rotates each round so the worker's edge cache can't
+  // pin a host that died since the last pass. status.d420.de's table is
+  // still folded in - new instances appear there first. With nothing
+  // verified, twiiit.com (a redirector that picks a live instance per
+  // click) is sent; probing that fails too leaves host null and the
+  // embedder falls back to bird.makeup.
   const NITTER_POLL_MS = 15 * 60 * 1000;
+  const NITTER_HOSTS = [
+    'https://nitter.tiekoetter.com',
+    'https://xnologin.com',
+    'https://nitter.space',
+    'https://xcopy.uk',
+    'https://nitter.pp.ua',
+    'https://nitter.meowing.monster',
+    'https://shitter.thepixora.com',
+    'https://twiiit.com',
+  ];
+  const NITTER_PROBE_USERS = ['jack', 'nytimes', 'hasanthehun', 'Twitter', 'NASA', 'neiltyson'];
   let nitterTimer = null;
   let lastNitter = undefined;
+  let nitterProbeN = 0;
+
+  async function nitterAlive(host, user) {
+    try {
+      const j = await fetch(`${PEEK_URL}?url=${encodeURIComponent(`${host}/${user}`)}`,
+        { signal: AbortSignal.timeout(12000) }).then((r) => (r.ok ? r.json() : null));
+      return !!j && (j.site === 'Nitter' ||
+        new RegExp(`\\(@${user}\\)`, 'i').test(j.title || ''));
+    } catch (e) { return false; }
+  }
 
   async function fetchNitterHost() {
     if (!peer) return;
-    let best = null;
+    const user = NITTER_PROBE_USERS[nitterProbeN++ % NITTER_PROBE_USERS.length];
+    const hosts = [...NITTER_HOSTS];
     try {
       const html = await fetch('https://status.d420.de/')
         .then((r) => (r.ok ? r.text() : null));
       if (html) {
         const doc = new DOMParser().parseFromString(html, 'text/html');
-        let bestMs = Infinity;
-        for (const tr of doc.querySelectorAll('table tr')) {
+        for (const a of doc.querySelectorAll('td a[href^="http"]')) {
           // tracker hrefs end in '/', and some instances 400 on a doubled
           // slash - strip it here so `${host}/path` always lands clean
-          const host = tr.querySelector('td a[href^="http"]')?.href.replace(/\/+$/, '');
-          const healthy = tr.querySelector('span[aria-label="healthy"]');
-          const ms = parseInt(tr.querySelector('td[data-name="average"]')?.textContent, 10);
-          if (host && healthy && ms > 0 && ms < bestMs) { best = host; bestMs = ms; }
+          const h = a.href.replace(/\/+$/, '');
+          if (/^https:\/\//.test(h) && !hosts.includes(h)) hosts.push(h);
         }
       }
-    } catch (e) { /* keep last pick */ }
-    // tracker "healthy" can still mean a dead box - nitter sends no CORS
-    // headers, so a no-cors probe only proves the host answers at all
-    if (best) {
-      try {
-        if ((await fetch(best, { mode: 'no-cors' })).type !== 'opaque') best = null;
-      } catch (e) { best = null; }
-    }
+    } catch (e) { /* the tracker is optional - the fixed list probes anyway */ }
+    const ok = await Promise.all(hosts.map((h) => nitterAlive(h, user)));
+    const best = hosts.find((h, i) => ok[i]) || null;
     if (best !== lastNitter) { lastNitter = best; send({ type: 'nitter', host: best }); }
   }
 
@@ -389,13 +410,22 @@ the same <code>{type: 'stream'}</code> reports.</p>
       }
       return;
     }
-    // tweet previews: fxtwitter's public JSON API answers without an x
-    // login; only the fields the card needs cross the iframe boundary
+    // tweet previews: the FixTweet api answers without an x login; the
+    // fxtwitter and vxtwitter endpoints serve the same schema, so one
+    // stands in for the other. only the fields the card needs cross the
+    // iframe boundary
     if (d.type === 'tweet') {
       if (peer && event.source === peer.source && event.origin === peer.origin
           && /^\d{1,20}$/.test(d.id || '')) {
-        fetch(`https://api.fxtwitter.com/status/${d.id}`)
-          .then((r) => (r.ok ? r.json() : null))
+        (async () => {
+          let j = null;
+          for (const api of ['https://api.fxtwitter.com', 'https://api.vxtwitter.com']) {
+            j = await fetch(`${api}/status/${d.id}`, { signal: AbortSignal.timeout(7000) })
+              .then((r) => (r.ok ? r.json() : null)).catch(() => null);
+            if (j && j.tweet) break;
+          }
+          return j;
+        })()
           .then((j) => {
             const t = j && j.tweet;
             // photos plus video/gif thumbnails; media on a quoted tweet and
@@ -430,7 +460,12 @@ the same <code>{type: 'stream'}</code> reports.</p>
     if (d.type === 'linkpeek') {
       if (peer && event.source === peer.source && event.origin === peer.origin
           && typeof d.url === 'string' && /^https?:\/\/\S{1,2000}$/.test(d.url)) {
-        fetch(PEEK_URL + '?url=' + encodeURIComponent(d.url), { signal: AbortSignal.timeout(10000) })
+        // x profile pages are js-walled and scrape empty; the live nitter
+        // mirror carries the same name/bio/avatar meta, so the ask goes
+        // there while the reply keeps the original url as its key
+        const twp = /^https:\/\/(?:www\.|mobile\.)?(?:x\.com|twitter\.com)\/([A-Za-z0-9_]{1,15})\/?$/i.exec(d.url);
+        const target = twp && lastNitter ? `${lastNitter}/${twp[1]}` : d.url;
+        fetch(PEEK_URL + '?url=' + encodeURIComponent(target), { signal: AbortSignal.timeout(10000) })
           .then((r) => (r.ok ? r.json() : null))
           .then((j) => {
             // a failed scrape still forwards the resolved address, so a

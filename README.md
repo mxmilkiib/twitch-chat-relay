@@ -63,15 +63,21 @@ Relay → parent:
   `animated`/`imageType`, FFZ `animated` urls), plus stream history:
   `lastBroadcast` and the latest VOD's start/end from Twitch's public
   GraphQL endpoint
-- `{type: 'nitter', host}` — fastest healthy nitter instance scraped
-  from [status.d420.de](https://status.d420.de/), rechecked every 15 min
+- `{type: 'nitter', host}` — a nitter instance verified live through the
+  linkpeek worker (a `site: Nitter` scrape answers a real profile page,
+  walls and parked pages don't; the probed user rotates so the worker's
+  edge cache can't pin a dead pick). Candidates are a built-in list plus
+  whatever [status.d420.de](https://status.d420.de/) still tracks, with
+  [twiiit](https://twiiit.com/)'s per-click redirect as the last resort
+  before `null`. Rechecked every 15 min
 - `{type: 'auth', login, scopes}` or `{type: 'auth', error}` — result of
   an `auth` request (see above)
 - `{type: 'wscause', code, reason}` — why the Twitch socket last closed,
   sent alongside each `reconnecting` status
 - `{type: 'tweet', id, tweet}` — preview data (text, author, photo and
   video thumbnails, quoted-tweet media) for a status id the embedder
-  requested with `{type: 'tweet', id}`, fetched from api.fxtwitter.com
+  requested with `{type: 'tweet', id}`, fetched from the FixTweet api
+  (api.fxtwitter.com, then api.vxtwitter.com - same schema)
 - `{type: 'linkpeek', id, url, peek}` — page metadata (title,
   description, site, image, icon, color, author, published, views,
   facts, video, ttl, final url). `video` is a directly playable file —
