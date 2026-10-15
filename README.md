@@ -24,6 +24,10 @@ iframe.contentWindow.postMessage({ type: 'join', channel: 'somechannel' },
                                  'https://mxmilkiib.github.io');
 ```
 
+For a status-only check, embed `live.html` instead and send
+`{type: 'streamprobe', channels: ['somechannel']}`. It answers with the
+same `stream` message without joining chat.
+
 ## Protocol
 
 Parent → relay: `{type: 'join', channel}`, `{type: 'backfill'}` —

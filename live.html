@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>Twitch stream status probe</title>
+<script>
+(() => {
+  window.addEventListener('message', async (event) => {
+    if (!/^https?:/.test(event.origin)) return;
+    const d = event.data || {};
+    if (d.type !== 'streamprobe' || !Array.isArray(d.channels)) return;
+    const channels = [...new Set(d.channels
+      .map((c) => String(c).toLowerCase().replace(/[^a-z0-9_]/g, ''))
+      .filter(Boolean))].slice(0, 64);
+    for (const channel of channels) {
+      try {
+        const [uptime, viewers, title] = await Promise.all([
+          fetch(`https://decapi.me/twitch/uptime/${channel}`,
+            { signal: AbortSignal.timeout(10000) }).then((r) => r.text()),
+          fetch(`https://decapi.me/twitch/viewercount/${channel}`,
+            { signal: AbortSignal.timeout(10000) }).then((r) => r.text()),
+          fetch(`https://decapi.me/twitch/title/${channel}`,
+            { signal: AbortSignal.timeout(10000) }).then((r) => r.text()),
+        ]);
+        event.source.postMessage({
+          type: 'stream', channel,
+          uptime: uptime.trim(), viewers: viewers.trim(), title: title.trim(),
+        }, event.origin);
+      } catch {
+        event.source.postMessage({ type: 'stream', channel, error: true }, event.origin);
+      }
+    }
+  });
+})();
+</script>
