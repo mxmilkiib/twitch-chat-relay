@@ -725,7 +725,7 @@ async function gimg(raw, origin, ctx) {
   return out;
 }
 
-// instance pings: the relay page sends ?ping=<rand> on load and every few
+// instance relays: the relay page sends ?relay=<rand> on load and every few
 // minutes while alive - each lands in the analytics dataset, which answers
 // unique-viewer counts over arbitrary windows via GraphQL
 
@@ -740,12 +740,13 @@ export default {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsFor(origin) });
     if (request.method !== 'GET') return reply({ error: 'method not allowed' }, origin, 405, TTL_FAIL);
 
-    const ping = self.searchParams.get('ping');
-    if (ping !== null) {
-      if (/^[a-z0-9]{4,24}$/i.test(ping)) {
-        if (env.PINGS) env.PINGS.writeDataPoint({ blobs: [ping] });
-        // raw archive copy - the VPS log keeps pings past AE's 92-day cap
-        ctx.waitUntil(fetch('https://orange.thingsandstuff.org/use?id=' + ping)
+    // 'ping' stays accepted for relay pages opened before the rename
+    const relay = self.searchParams.get('relay') ?? self.searchParams.get('ping');
+    if (relay !== null) {
+      if (/^[a-z0-9]{4,24}$/i.test(relay)) {
+        if (env.RELAYS) env.RELAYS.writeDataPoint({ blobs: [relay] });
+        // raw archive copy - the VPS log keeps relays past AE's 92-day cap
+        ctx.waitUntil(fetch('https://orange.thingsandstuff.org/use?id=' + relay)
           .catch(() => {}));
       }
       return reply({ ok: true }, origin, 200, TTL_FAIL);

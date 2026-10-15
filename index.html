@@ -364,17 +364,17 @@ the same <code>{type: 'stream'}</code> reports.</p>
     if (lines.length) send({ type: 'lines', lines, replay: true });
   }
 
-  // instance ping: a random per-load id re-sent every few minutes while
-  // the relay lives - the worker counts live ids as a rough viewer count.
-  // a suspended iframe stops pinging, so the count tracks "alive now"
+  // instance relay: a random per-load id re-sent every few minutes while
+  // the page lives - the worker counts live ids as a rough viewer count.
+  // a suspended iframe stops relaying, so the count tracks "alive now"
   // a 'me' flag - in this origin's storage or messaged by the parent -
   // tags this browser's ids, so they read apart from other viewers' in
   // the worker's log
-  const pingId = Math.random().toString(36).slice(2, 14);
+  const relayId = Math.random().toString(36).slice(2, 14);
   let meTag = (localStorage.getItem('me') || '').replace(/[^a-z0-9]/gi, '').slice(0, 12);
-  const pingWorker = () => fetch(`${PEEK_URL}?ping=${pingId + meTag}`).catch(() => {});
-  pingWorker();
-  setInterval(pingWorker, 5 * 60e3);
+  const relayWorker = () => fetch(`${PEEK_URL}?relay=${relayId + meTag}`).catch(() => {});
+  relayWorker();
+  setInterval(relayWorker, 5 * 60e3);
 
   window.addEventListener('message', (event) => {
     const d = event.data;
@@ -388,7 +388,7 @@ the same <code>{type: 'stream'}</code> reports.</p>
         setAuth(typeof d.token === 'string' && d.token ? d.token : null);
       return;
     }
-    // a tag the parent carries in its own storage - appends to the ping id
+    // a tag the parent carries in its own storage - appends to the relay id
     if (d.type === 'me') {
       if (peer && event.source === peer.source && event.origin === peer.origin
           && typeof d.me === 'string' && /^[a-z0-9]{1,12}$/i.test(d.me)) meTag = d.me;
