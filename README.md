@@ -129,4 +129,4 @@ Push to `main`; GitHub Pages serves it.
 
 ## License
 
-AGPL-3.0 — see [LICENSE](LICENSE).
+[AGPL-3.0-or-later](https://spdx.org/licenses/AGPL-3.0-or-later.html) - see [LICENSE](LICENSE).
