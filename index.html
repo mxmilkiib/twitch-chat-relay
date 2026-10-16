@@ -42,33 +42,36 @@ the same <code>{type: 'stream'}</code> reports.</p>
   }
 
   function connect() {
+    // a stray timer or repeat join must not stack a second socket on a
+    // live one - the loser would keep forwarding lines alongside it
+    if (ws && ws.readyState !== WebSocket.CLOSED && ws.readyState !== WebSocket.CLOSING) return;
     setStatus(reconnectAttempt === 0 ? 'connecting' : 'reconnecting');
-    ws = new WebSocket(WS_URL);
+    const s = ws = new WebSocket(WS_URL);
 
-    ws.onopen = () => {
-      ws.send('CAP REQ :twitch.tv/tags twitch.tv/commands');
+    s.onopen = () => {
+      s.send('CAP REQ :twitch.tv/tags twitch.tv/commands');
       if (auth) {
-        ws.send('PASS oauth:' + auth.token);
-        ws.send('NICK ' + auth.login);
+        s.send('PASS oauth:' + auth.token);
+        s.send('NICK ' + auth.login);
       } else {
-        ws.send('PASS justinfan');
-        ws.send('NICK justinfan' + Math.floor(Math.random() * 99999));
+        s.send('PASS justinfan');
+        s.send('NICK justinfan' + Math.floor(Math.random() * 99999));
       }
-      for (const ch of channels) ws.send('JOIN #' + ch);
+      for (const ch of channels) s.send('JOIN #' + ch);
     };
 
-    ws.onmessage = (evt) => {
+    s.onmessage = (evt) => {
       const lines = evt.data.split('\r\n').filter(Boolean);
       for (const line of lines) {
-        if (line.startsWith('PING')) ws.send('PONG :tmi.twitch.tv');
+        if (line.startsWith('PING')) s.send('PONG :tmi.twitch.tv');
         // RECONNECT is a bare ':host RECONNECT' server line - a substring
         // match would let chat text containing the word kill the socket,
         // and the early return dropped the rest of the chunk unforwarded
-        else if (/^(?:@\S+ )?:[\w.-]+ RECONNECT$/.test(line)) ws.close();
+        else if (/^(?:@\S+ )?:[\w.-]+ RECONNECT$/.test(line)) s.close();
         else if (/authentication failed|Improperly formatted auth/.test(line)) {
           auth = null;
           send({ type: 'auth', error: 'login rejected' });
-          ws.close();
+          s.close();
           return;
         }
         else if (line.includes(' 001 ')) { reconnectAttempt = 0; setStatus('connected'); }
@@ -76,8 +79,11 @@ the same <code>{type: 'stream'}</code> reports.</p>
       send({ type: 'lines', lines });
     };
 
-    ws.onclose = (e) => scheduleReconnect(e.code, e.reason || '');
-    ws.onerror = () => ws.close();
+    // only the live socket's own close may schedule a retry - a stale
+    // socket dying after a replacement connects would queue a
+    // reconnect for nothing
+    s.onclose = (e) => { if (s === ws) scheduleReconnect(e.code, e.reason || ''); };
+    s.onerror = () => { if (s === ws) s.close(); };
   }
 
   function scheduleReconnect(code, reason) {
@@ -254,16 +260,26 @@ the same <code>{type: 'stream'}</code> reports.</p>
     } catch (e) { return null; }
   }
 
+  let authPending = '';
   async function setAuth(token) {
     if (!token) {
-      if (!auth) return;
+      if (!auth && !authPending) return;
       auth = null;
+      authPending = '';
       send({ type: 'auth', login: null });
       if (ws) ws.close();
       return;
     }
+    // the embedder re-offers its token with every join retry - the same
+    // token must not re-close the socket, or the 3s join ping kills each
+    // in-flight connect and spins a reconnect loop
+    if (auth && auth.token === token) { send({ type: 'auth', login: auth.login }); return; }
+    if (authPending === token) return; // identical ask already validating
+    authPending = token;
     const v = await validateToken(token);
+    authPending = '';
     if (!v) { send({ type: 'auth', error: 'token rejected' }); return; }
+    if (auth && auth.token === token) { send({ type: 'auth', login: auth.login }); return; }
     auth = { token, login: v.login };
     send({ type: 'auth', login: v.login, scopes: v.scope });
     if (ws) ws.close(); // reconnect logs in as the user and re-joins
@@ -556,7 +572,8 @@ the same <code>{type: 'stream'}</code> reports.</p>
     if (!/^https?:/.test(event.origin)) return;
     // a fresh embedder must re-hear every channel's emote payload and the
     // nitter pick - dedupe state only applies within one peer's session
-    if (!peer || peer.source !== event.source || peer.origin !== event.origin) {
+    const peerChanged = !peer || peer.source !== event.source || peer.origin !== event.origin;
+    if (peerChanged) {
       lastEmoteJson.clear();
       lastNitter = undefined;
     }
@@ -574,10 +591,15 @@ the same <code>{type: 'stream'}</code> reports.</p>
     if (!pollTimer) pollTimer = setInterval(pollStream, POLL_MS);
     if (!emoteTimer) emoteTimer = setInterval(fetchEmotes, EMOTE_POLL_MS);
     if (!nitterTimer) nitterTimer = setInterval(fetchNitterHost, NITTER_POLL_MS);
-    pollStream();
-    fetchEmotes();
-    fetchNitterHost();
-    fetchRepo();
+    // repeat joins during boot are no-ops for state - the embedder pings
+    // every 3s until connected, so housekeeping fetches only re-run when
+    // the channel set grew or the peer itself changed
+    if (added.length || peerChanged) {
+      pollStream();
+      fetchEmotes();
+      fetchNitterHost();
+      fetchRepo();
+    }
     if (open) {
       for (const ch of added) ws.send('JOIN #' + ch);
       setStatus('connected');
