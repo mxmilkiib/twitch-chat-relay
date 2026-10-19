@@ -380,17 +380,32 @@ the same <code>{type: 'stream'}</code> reports.</p>
     if (lines.length) send({ type: 'lines', lines, replay: true });
   }
 
-  // instance relay: a random per-load id re-sent every few minutes while
-  // the page lives - the worker counts live ids as a rough viewer count.
-  // a suspended iframe stops relaying, so the count tracks "alive now"
+  // instance relay: a session id re-sent every few minutes while the page
+  // lives - the worker counts live ids as a rough viewer count. a suspended
+  // iframe stops relaying, so the count tracks "alive now". the id keeps in
+  // sessionStorage so a reload doesn't mint a fresh unique for the window.
   // a 'me' flag - in this origin's storage or messaged by the parent -
   // tags this browser's ids, so they read apart from other viewers' in
-  // the worker's log
-  const relayId = Math.random().toString(36).slice(2, 14);
+  // the worker's log. an ?overlay url (obs browser-source) never pings
+  const relayId = (() => {
+    try {
+      const id = sessionStorage.getItem('relay-sid') || Math.random().toString(36).slice(2, 14);
+      sessionStorage.setItem('relay-sid', id);
+      return id;
+    } catch { return Math.random().toString(36).slice(2, 14); }
+  })();
   let meTag = (localStorage.getItem('me') || '').replace(/[^a-z0-9]/gi, '').slice(0, 12);
-  const relayWorker = () => fetch(`${PEEK_URL}?relay=${relayId + meTag}`).catch(() => {});
+  const relayWorker = (bye) => {
+    if (new URLSearchParams(location.search).has('overlay')) return;
+    fetch(`${PEEK_URL}?relay=${relayId + meTag}${bye ? '&bye=1' : ''}`,
+        bye ? { keepalive: true } : {}).catch(() => {});
+  };
   relayWorker();
-  setInterval(relayWorker, 5 * 60e3);
+  // a fixed tick herds every viewer into lockstep after a mass reload -
+  // the up-to-30s jitter keeps the writes scattered
+  const pingLoop = () => setTimeout(() => { relayWorker(); pingLoop(); }, 5 * 60e3 + Math.random() * 30e3);
+  pingLoop();
+  addEventListener('pagehide', () => relayWorker(true));
 
   window.addEventListener('message', (event) => {
     const d = event.data;
@@ -404,10 +419,11 @@ the same <code>{type: 'stream'}</code> reports.</p>
         setAuth(typeof d.token === 'string' && d.token ? d.token : null);
       return;
     }
-    // a tag the parent carries in its own storage - appends to the relay id
+    // a tag the parent carries in its own storage - appends to the relay
+    // id; re-ping so the tag lands in the log without waiting a tick
     if (d.type === 'me') {
       if (peer && event.source === peer.source && event.origin === peer.origin
-          && typeof d.me === 'string' && /^[a-z0-9]{1,12}$/i.test(d.me)) meTag = d.me;
+          && typeof d.me === 'string' && /^[a-z0-9]{1,12}$/i.test(d.me)) { meTag = d.me; relayWorker(); }
       return;
     }
     // one-shot live probe for channels outside the join set - the same

@@ -744,9 +744,12 @@ export default {
     const relay = self.searchParams.get('relay') ?? self.searchParams.get('ping');
     if (relay !== null) {
       if (/^[a-z0-9]{4,24}$/i.test(relay)) {
-        if (env.RELAYS) env.RELAYS.writeDataPoint({ blobs: [relay] });
+        // second blob column marks the event - pagehide byes give the log
+        // an explicit leave instead of inferring it from silence
+        const bye = self.searchParams.get('bye') !== null;
+        if (env.RELAYS) env.RELAYS.writeDataPoint({ blobs: [relay, bye ? 'bye' : 'ping'] });
         // raw archive copy - the VPS log keeps relays past AE's 92-day cap
-        ctx.waitUntil(fetch('https://orange.thingsandstuff.org/use?id=' + relay)
+        ctx.waitUntil(fetch('https://orange.thingsandstuff.org/use?id=' + relay + (bye ? '&bye=1' : ''))
           .catch(() => {}));
       }
       return reply({ ok: true }, origin, 200, TTL_FAIL);
