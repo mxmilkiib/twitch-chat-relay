@@ -725,8 +725,8 @@ async function gimg(raw, origin, ctx) {
   return out;
 }
 
-// instance relays: the relay page sends ?relay=<rand> on load and every few
-// minutes while alive - each lands in the analytics dataset, which answers
+// instance relays: the relay page sends ?relay=<rand> on load and every
+// minute while alive - each lands in the analytics dataset, which answers
 // unique-viewer counts over arbitrary windows via GraphQL
 
 export default {

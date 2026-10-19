@@ -380,7 +380,7 @@ the same <code>{type: 'stream'}</code> reports.</p>
     if (lines.length) send({ type: 'lines', lines, replay: true });
   }
 
-  // instance relay: a session id re-sent every few minutes while the page
+  // instance relay: a session id re-sent every minute while the page
   // lives - the worker counts live ids as a rough viewer count. a suspended
   // iframe stops relaying, so the count tracks "alive now". the id keeps in
   // sessionStorage so a reload doesn't mint a fresh unique for the window.
@@ -402,8 +402,8 @@ the same <code>{type: 'stream'}</code> reports.</p>
   };
   relayWorker();
   // a fixed tick herds every viewer into lockstep after a mass reload -
-  // the up-to-30s jitter keeps the writes scattered
-  const pingLoop = () => setTimeout(() => { relayWorker(); pingLoop(); }, 5 * 60e3 + Math.random() * 30e3);
+  // the up-to-10s jitter keeps the writes scattered
+  const pingLoop = () => setTimeout(() => { relayWorker(); pingLoop(); }, 60e3 + Math.random() * 10e3);
   pingLoop();
   addEventListener('pagehide', () => relayWorker(true));
 
