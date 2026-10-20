@@ -9,7 +9,7 @@
 <code>{type: 'join', channels: ['somechannel', ...]}</code> to it; it replies
 with <code>{type: 'status', state}</code> and <code>{type: 'lines', lines}</code>
 messages containing raw Twitch IRC lines, plus periodic
-<code>{type: 'stream', channel, uptime, viewers, title}</code> status from
+<code>{type: 'stream', channel, uptime, viewers, title, disp}</code> status from
 decapi and <code>{type: 'emotes', channel, ...}</code> sets per channel.
 <code>{type: 'auth', token}</code> logs the socket in as that user, after
 which <code>{type: 'send', channel, text}</code> posts to a joined channel;
@@ -98,14 +98,30 @@ the same <code>{type: 'stream'}</code> reports.</p>
   const POLL_MS = 60000;
   let pollTimer = null;
 
+  // display-name casing via ivr (no auth) - cached, it changes rarely;
+  // null means 'not resolved', so a probe failure isn't sticky
+  const dispNames = new Map();
+  async function dispName(ch) {
+    if (dispNames.has(ch)) return dispNames.get(ch);
+    let d = null;
+    try {
+      const j = await fetch(`https://api.ivr.fi/v2/twitch/user?login=${ch}`).then((r) => r.json());
+      const rec = Array.isArray(j) ? j[0] : j;
+      if (rec && /^[a-zA-Z0-9_]{1,25}$/.test(rec.displayName || '')) d = rec.displayName;
+    } catch {}
+    if (d != null) dispNames.set(ch, d);
+    return d;
+  }
+
   async function pollStream() {
     if (!peer || !channels.size) return;
     for (const channel of channels) {
       try {
-        const [uptime, viewers, title] = await Promise.all([
+        const [uptime, viewers, title, disp] = await Promise.all([
           fetch(`https://decapi.me/twitch/uptime/${channel}`).then((r) => r.text()),
           fetch(`https://decapi.me/twitch/viewercount/${channel}`).then((r) => r.text()),
           fetch(`https://decapi.me/twitch/title/${channel}`).then((r) => r.text()),
+          dispName(channel),
         ]);
         send({
           type: 'stream',
@@ -113,6 +129,7 @@ the same <code>{type: 'stream'}</code> reports.</p>
           uptime: uptime.trim(),
           viewers: viewers.trim(),
           title: title.trim(),
+          disp: disp || '',
         });
       } catch (e) { /* keep last state on transient failure */ }
     }
@@ -525,12 +542,13 @@ the same <code>{type: 'stream'}</code> reports.</p>
           let ch;
           while ((ch = queue.shift())) {
             try {
-              const [uptime, viewers, title] = await Promise.all([
+              const [uptime, viewers, title, disp] = await Promise.all([
                 fetch(`https://decapi.me/twitch/uptime/${ch}`).then((r) => r.text()),
                 fetch(`https://decapi.me/twitch/viewercount/${ch}`).then((r) => r.text()),
                 fetch(`https://decapi.me/twitch/title/${ch}`).then((r) => r.text()),
+                dispName(ch),
               ]);
-              send({ type: 'stream', channel: ch, uptime: uptime.trim(), viewers: viewers.trim(), title: title.trim() });
+              send({ type: 'stream', channel: ch, uptime: uptime.trim(), viewers: viewers.trim(), title: title.trim(), disp: disp || '' });
             } catch {}
           }
         };
