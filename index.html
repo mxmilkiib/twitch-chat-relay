@@ -277,6 +277,63 @@ the same <code>{type: 'stream'}</code> reports.</p>
     if (subSets.length) send({ type: 'twsets', key: '', sets: subSets });
   }
 
+  // ---- 7tv paints: twitch uid -> cosmetic css descriptor ----
+  // paint_id lives on the v3 user; the paint body comes back from v4
+  // gql. Both results cache - one paint object serves every wearer
+  const paintByUid = new Map();
+  const paintCache = new Map();
+  const paintRgba = (hex, op) => {
+    const h = String(hex || '#000000FF').replace('#', '');
+    const a = parseInt(h.slice(6, 8) || 'ff', 16) / 255 * (op == null ? 1 : op);
+    return `rgba(${parseInt(h.slice(0, 2), 16)},${parseInt(h.slice(2, 4), 16)},${parseInt(h.slice(4, 6), 16)},${a.toFixed(3)})`;
+  };
+  function paintCss(paint) {
+    const data = paint && paint.data;
+    if (!data) return null;
+    const bgs = [];
+    for (const l of data.layers || []) {
+      const t = l.ty || {}, op = l.opacity;
+      const stops = (t.stops || []).map((s) =>
+        `${paintRgba(s.color && s.color.hex, op)} ${Math.round((s.at || 0) * 100)}%`).join(', ');
+      if (t.__typename === 'PaintLayerTypeLinearGradient' && stops)
+        bgs.push(`${t.repeating ? 'repeating-' : ''}linear-gradient(${t.angle || 0}deg, ${stops})`);
+      else if (t.__typename === 'PaintLayerTypeRadialGradient' && stops)
+        bgs.push(`${t.repeating ? 'repeating-' : ''}radial-gradient(${(t.shape || '').toLowerCase() === 'circle' ? 'circle' : 'ellipse'}, ${stops})`);
+      else if (t.__typename === 'PaintLayerTypeSingleColor' && t.color)
+        bgs.push(paintRgba(t.color.hex, op));
+      else if (t.__typename === 'PaintLayerTypeImage') {
+        const img = (t.images || []).filter((i) => i.mime === 'image/webp' && !/_static\./.test(i.url || '')).pop();
+        if (img) bgs.push(`url(${img.url})`);
+      }
+    }
+    const sh = (data.shadows || []).map((s) =>
+      `drop-shadow(${s.offsetX}px ${s.offsetY}px ${s.blur}px ${paintRgba(s.color && s.color.hex)})`).join(' ');
+    return bgs.length ? { bg: bgs.join(', '), sh, name: paint.name || '' } : null;
+  }
+  async function fetchPaint(uid) {
+    try {
+      const u = await fetch(`https://7tv.io/v3/users/twitch/${uid}`,
+        { signal: AbortSignal.timeout(8000) }).then((r) => (r.ok ? r.json() : null));
+      const pid = u && u.user && u.user.style && u.user.style.paint_id;
+      if (!pid) return null;
+      if (!paintCache.has(pid)) {
+        const q = `{ paints { paint(id: "${pid}") { id name data {
+          layers { opacity ty { __typename
+            ... on PaintLayerTypeSingleColor { color { hex } }
+            ... on PaintLayerTypeLinearGradient { angle repeating stops { at color { hex } } }
+            ... on PaintLayerTypeRadialGradient { repeating shape stops { at color { hex } } }
+            ... on PaintLayerTypeImage { images { url mime } } } }
+          shadows { offsetX offsetY blur color { hex } } } } }`;
+        const g = await fetch('https://7tv.io/v4/gql', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: q }), signal: AbortSignal.timeout(8000),
+        }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+        paintCache.set(pid, paintCss(g && g.data && g.data.paints && g.data.paints.paint));
+      }
+      return paintCache.get(pid) || null;
+    } catch { return null; }
+  }
+
   // ---- user auth: the embedder hands over an implicit-grant token; ----
   // validating it here (no CSP on this origin) yields the login, then the
   // socket reconnects with user creds so PRIVMSG can be sent as them.
@@ -579,6 +636,26 @@ the same <code>{type: 'stream'}</code> reports.</p>
               img: j ? j.img : null });
           })
           .catch(() => send({ type: 'giphy', q: d.q, url: null, page: null }));
+      }
+      return;
+    }
+    // 7tv paints: uid -> css descriptor. the v3 rest user only carries a
+    // paint_id; v4 gql resolves that to layers and shadows, compiled here
+    // into background/filter strings so the embedder stays a dumb
+    // renderer. serial fetches keep the free api happy; nulls map users
+    // with no paint so the page never re-asks
+    if (d.type === 'paint') {
+      if (peer && event.source === peer.source && event.origin === peer.origin
+          && Array.isArray(d.ids)) {
+        const ids = [...new Set(d.ids.map(String).filter((x) => /^\d+$/.test(x)))].slice(0, 60);
+        (async () => {
+          const map = {};
+          for (const id of ids) {
+            if (!paintByUid.has(id)) paintByUid.set(id, await fetchPaint(id));
+            map[id] = paintByUid.get(id);
+          }
+          if (ids.length) send({ type: 'paint', map });
+        })();
       }
       return;
     }
