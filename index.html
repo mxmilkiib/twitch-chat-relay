@@ -599,6 +599,31 @@ the same <code>{type: 'stream'}</code> reports.</p>
       }
       return;
     }
+    // image paste uploads: the embedder's CSP stops its own post, so the
+    // blob crosses the iframe boundary (structured clone carries File)
+    // and the relay multipart-posts it to catbox - a durable host with a
+    // plain files.catbox.moe url the page can drop straight into chat
+    if (d.type === 'upload') {
+      if (peer && event.source === peer.source && event.origin === peer.origin
+          && /^\d+$/.test(d.id || '') && d.blob instanceof Blob
+          && /^image\//.test(d.blob.type) && d.blob.size > 0
+          && d.blob.size <= 25 * 1024 * 1024) {
+        const fd = new FormData();
+        fd.append('reqtype', 'fileupload');
+        fd.append('fileToUpload', d.blob,
+          typeof d.name === 'string' && /^[\w .-]{1,120}$/.test(d.name) ? d.name : 'paste.png');
+        fetch('https://catbox.moe/user/api.php', {
+          method: 'POST', body: fd, signal: AbortSignal.timeout(30000),
+        }).then((r) => (r.ok ? r.text() : Promise.reject(new Error('http ' + r.status))))
+          .then((t) => {
+            const url = (t || '').trim();
+            send({ type: 'upload', id: d.id,
+              url: /^https:\/\/files\.catbox\.moe\/\S+$/.test(url) ? url : null });
+          })
+          .catch(() => send({ type: 'upload', id: d.id, url: null }));
+      }
+      return;
+    }
     if (d.type === 'send') {
       if (peer && event.source === peer.source && event.origin === peer.origin
           && auth && channels.has(d.channel) && ws && ws.readyState === WebSocket.OPEN
