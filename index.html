@@ -130,15 +130,44 @@ the same <code>{type: 'stream'}</code> reports.</p>
     const get = (u) => fetch(u).then((r) => (r.ok ? r.json() : null)).catch(() => null);
     // globals are channel-independent: fetch them once per cycle, not per
     // channel, then each channel's own sets override them
-    const [stvGlobal, bttvGlobal, ffzGlobal, badgesGlobal] = await Promise.all([
+    const [stvGlobal, bttvGlobal, ffzGlobal, badgesGlobal,
+           c2Badges, ffzBadges, bttvBadges] = await Promise.all([
       get('https://7tv.io/v3/emote-sets/global'),
       get('https://api.betterttv.net/3/cached/emotes/global'),
       get('https://api.frankerfacez.com/v1/set/global'),
       get('https://api.ivr.fi/v2/twitch/badges/global'),
+      get('https://api.chatterino.com/badges'),
+      get('https://api.frankerfacez.com/v1/badges/ids'),
+      get('https://api.betterttv.net/3/cached/badges'),
     ]);
+    // third-party user badges (chatterino/ffz/bttv) key on twitch user
+    // ids, so the embedder matches them against each row's user-id tag.
+    // precedence walks c2 -> ffz -> bttv: a user in several keeps bttv's
+    const extBadges = {};
+    for (const b of (c2Badges && c2Badges.badges) || []) {
+      const u = b.image2 || b.image1;
+      if (!u) continue;
+      for (const id of b.users || [])
+        extBadges[id] = { u, t: b.tooltip || 'Chatterino badge', s: 'chatterino' };
+    }
+    for (const b of (ffzBadges && ffzBadges.badges) || []) {
+      const u = (b.urls && (b.urls['2'] || b.urls['1'])) || b.image;
+      if (!u) continue;
+      for (const id of ((ffzBadges.users || {})[String(b.id)] || []))
+        extBadges[id] = { u, t: b.title || b.name || 'FFZ badge', s: 'ffz' };
+    }
+    for (const e of bttvBadges || []) {
+      const u = e.badge && (e.badge.image || e.badge.svg);
+      if (!u || !e.providerId) continue;
+      extBadges[e.providerId] = { u, t: e.badge.description || 'BTTV badge', s: 'bttv' };
+    }
+    // the map is channel-independent - one deduped send per peer cycle
+    const extJson = JSON.stringify(extBadges);
+    if (extJson !== lastExtJson) { lastExtJson = extJson; send({ type: 'extbadges', badges: extBadges }); }
     for (const channel of channels) await fetchEmotesFor(channel, get,
       { stvGlobal, bttvGlobal, ffzGlobal, badgesGlobal });
   }
+  let lastExtJson = '';
 
   async function fetchEmotesFor(channel, get, globs) {
     const emotes = {};
@@ -592,6 +621,7 @@ the same <code>{type: 'stream'}</code> reports.</p>
     if (peerChanged) {
       lastEmoteJson.clear();
       lastNitter = undefined;
+      lastExtJson = '';
     }
     peer = { source: event.source, origin: event.origin };
     // 'channels' list preferred; a bare 'channel' string stays supported.
