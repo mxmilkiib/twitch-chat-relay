@@ -756,12 +756,15 @@ export default {
         const who = /^[a-z0-9]{1,12}$/i.test(me) ? me : '';
         const ch = self.searchParams.get('ch') || '';
         const chans = /^[a-z0-9_]{2,25}(,[a-z0-9_]{2,25}){0,5}$/i.test(ch) ? ch : '';
+        const vis = /^[vh]$/.test(self.searchParams.get('vis') || '') ? self.searchParams.get('vis') : '';
+        const au = self.searchParams.get('au') === '1';
         if (env.RELAYS) env.RELAYS.writeDataPoint({
-          blobs: [relay, bye ? 'bye' : 'ping', site, who, chans] });
+          blobs: [relay, bye ? 'bye' : 'ping', site, who, chans, vis, au ? 'au' : ''] });
         // raw archive copy - the VPS log keeps relays past AE's 92-day cap
         ctx.waitUntil(fetch('https://orange.thingsandstuff.org/use?id=' + relay +
             (site ? '&via=' + encodeURIComponent(site) : '') +
             (who ? '&me=' + who : '') + (chans ? '&ch=' + chans : '') +
+            (vis ? '&vis=' + vis : '') + (au ? '&au=1' : '') +
             (bye ? '&bye=1' : ''))
           .catch(() => {}));
       }

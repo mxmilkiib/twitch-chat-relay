@@ -509,9 +509,13 @@ the same <code>{type: 'stream'}</code> reports.</p>
   const relayWorker = (bye) => {
     if (relayQs.has('overlay')) return;
     fetch(`${PEEK_URL}?relay=${relayId}${siteTag ? '&via=' + siteTag : ''}${meTag ? '&me=' + meTag : ''}` +
-        `${channels.size ? '&ch=' + [...channels].join(',') : ''}${bye ? '&bye=1' : ''}`,
+        `${channels.size ? '&ch=' + [...channels].join(',') : ''}${auth ? '&au=1' : ''}` +
+        `&vis=${document.visibilityState === 'hidden' ? 'h' : 'v'}${bye ? '&bye=1' : ''}`,
         bye ? { keepalive: true } : {}).catch(() => {});
   };
+  // backgrounding flips what 'live' means - ping on the change so the
+  // state lands in the log now rather than at the next tick
+  document.addEventListener('visibilitychange', () => relayWorker());
   relayWorker();
   // a fixed tick herds every viewer into lockstep after a mass reload -
   // the up-to-10s jitter keeps the writes scattered
