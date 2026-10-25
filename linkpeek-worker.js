@@ -745,11 +745,16 @@ export default {
     if (relay !== null) {
       if (/^[a-z0-9]{4,24}$/i.test(relay)) {
         // second blob column marks the event - pagehide byes give the log
-        // an explicit leave instead of inferring it from silence
+        // an explicit leave instead of inferring it from silence. the
+        // third names the embedding page's host, so hasanabi and twtch
+        // traffic can be told apart; a malformed tag just drops out
         const bye = self.searchParams.get('bye') !== null;
-        if (env.RELAYS) env.RELAYS.writeDataPoint({ blobs: [relay, bye ? 'bye' : 'ping'] });
+        const via = self.searchParams.get('via') || '';
+        const site = /^[a-z0-9][a-z0-9.-]{0,62}$/i.test(via) ? via : '';
+        if (env.RELAYS) env.RELAYS.writeDataPoint({ blobs: [relay, bye ? 'bye' : 'ping', site] });
         // raw archive copy - the VPS log keeps relays past AE's 92-day cap
-        ctx.waitUntil(fetch('https://orange.thingsandstuff.org/use?id=' + relay + (bye ? '&bye=1' : ''))
+        ctx.waitUntil(fetch('https://orange.thingsandstuff.org/use?id=' + relay +
+            (site ? '&via=' + encodeURIComponent(site) : '') + (bye ? '&bye=1' : ''))
           .catch(() => {}));
       }
       return reply({ ok: true }, origin, 200, TTL_FAIL);

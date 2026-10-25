@@ -498,9 +498,17 @@ the same <code>{type: 'stream'}</code> reports.</p>
     } catch { return Math.random().toString(36).slice(2, 14); }
   })();
   let meTag = (localStorage.getItem('me') || '').replace(/[^a-z0-9]/gi, '').slice(0, 12);
+  // which page embedded the relay: an explicit ?via= wins, else the iframe
+  // navigation's referrer carries the embedder's origin. a stripped or
+  // absent referrer (privacy tools, a direct load) gets filled in by the
+  // join origin below; beats log the site hostname beside the id
+  const relayQs = new URLSearchParams(location.search);
+  const hostOf = (u) => { try { return new URL(u).hostname; } catch { return ''; } };
+  let siteTag = (relayQs.get('via') || hostOf(document.referrer))
+    .replace(/[^a-z0-9.-]/gi, '').toLowerCase().slice(0, 63);
   const relayWorker = (bye) => {
-    if (new URLSearchParams(location.search).has('overlay')) return;
-    fetch(`${PEEK_URL}?relay=${relayId + meTag}${bye ? '&bye=1' : ''}`,
+    if (relayQs.has('overlay')) return;
+    fetch(`${PEEK_URL}?relay=${relayId + meTag}${siteTag ? '&via=' + siteTag : ''}${bye ? '&bye=1' : ''}`,
         bye ? { keepalive: true } : {}).catch(() => {});
   };
   relayWorker();
@@ -767,6 +775,9 @@ the same <code>{type: 'stream'}</code> reports.</p>
       lastExtJson = '';
     }
     peer = { source: event.source, origin: event.origin };
+    // the join origin is the embedder's ground truth - it tags beats that
+    // a stripped referrer left siteless
+    if (!siteTag) siteTag = hostOf(event.origin).slice(0, 63);
     // 'channels' list preferred; a bare 'channel' string stays supported.
     // join the additions, part the removals - a repeat join diffs the sets
     const want = new Set((Array.isArray(d.channels) ? d.channels : [d.channel])
