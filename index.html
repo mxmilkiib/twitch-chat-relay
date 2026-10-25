@@ -488,8 +488,8 @@ the same <code>{type: 'stream'}</code> reports.</p>
   // iframe stops relaying, so the count tracks "alive now". the id keeps in
   // sessionStorage so a reload doesn't mint a fresh unique for the window.
   // a 'me' flag - in this origin's storage or messaged by the parent -
-  // tags this browser's ids, so they read apart from other viewers' in
-  // the worker's log. an ?overlay url (obs browser-source) never pings
+  // rides its own param, so the log can fold a person's tabs into one
+  // unique. an ?overlay url (obs browser-source) never pings
   const relayId = (() => {
     try {
       const id = sessionStorage.getItem('relay-sid') || Math.random().toString(36).slice(2, 14);
@@ -508,7 +508,8 @@ the same <code>{type: 'stream'}</code> reports.</p>
     .replace(/[^a-z0-9.-]/gi, '').toLowerCase().slice(0, 63);
   const relayWorker = (bye) => {
     if (relayQs.has('overlay')) return;
-    fetch(`${PEEK_URL}?relay=${relayId + meTag}${siteTag ? '&via=' + siteTag : ''}${bye ? '&bye=1' : ''}`,
+    fetch(`${PEEK_URL}?relay=${relayId}${siteTag ? '&via=' + siteTag : ''}${meTag ? '&me=' + meTag : ''}` +
+        `${channels.size ? '&ch=' + [...channels].join(',') : ''}${bye ? '&bye=1' : ''}`,
         bye ? { keepalive: true } : {}).catch(() => {});
   };
   relayWorker();
@@ -530,8 +531,8 @@ the same <code>{type: 'stream'}</code> reports.</p>
         setAuth(typeof d.token === 'string' && d.token ? d.token : null);
       return;
     }
-    // a tag the parent carries in its own storage - appends to the relay
-    // id; re-ping so the tag lands in the log without waiting a tick
+    // a tag the parent carries in its own storage - rides the &me= param
+    // on beats; re-ping so the tag lands in the log without waiting a tick
     if (d.type === 'me') {
       if (peer && event.source === peer.source && event.origin === peer.origin
           && typeof d.me === 'string' && /^[a-z0-9]{1,12}$/i.test(d.me)) { meTag = d.me; relayWorker(); }

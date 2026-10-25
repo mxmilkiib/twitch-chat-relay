@@ -747,14 +747,22 @@ export default {
         // second blob column marks the event - pagehide byes give the log
         // an explicit leave instead of inferring it from silence. the
         // third names the embedding page's host, so hasanabi and twtch
-        // traffic can be told apart; a malformed tag just drops out
+        // traffic can be told apart; then the viewer's me-tag and the
+        // joined channels. a malformed tag just drops out
         const bye = self.searchParams.get('bye') !== null;
         const via = self.searchParams.get('via') || '';
         const site = /^[a-z0-9][a-z0-9.-]{0,62}$/i.test(via) ? via : '';
-        if (env.RELAYS) env.RELAYS.writeDataPoint({ blobs: [relay, bye ? 'bye' : 'ping', site] });
+        const me = self.searchParams.get('me') || '';
+        const who = /^[a-z0-9]{1,12}$/i.test(me) ? me : '';
+        const ch = self.searchParams.get('ch') || '';
+        const chans = /^[a-z0-9_]{2,25}(,[a-z0-9_]{2,25}){0,5}$/i.test(ch) ? ch : '';
+        if (env.RELAYS) env.RELAYS.writeDataPoint({
+          blobs: [relay, bye ? 'bye' : 'ping', site, who, chans] });
         // raw archive copy - the VPS log keeps relays past AE's 92-day cap
         ctx.waitUntil(fetch('https://orange.thingsandstuff.org/use?id=' + relay +
-            (site ? '&via=' + encodeURIComponent(site) : '') + (bye ? '&bye=1' : ''))
+            (site ? '&via=' + encodeURIComponent(site) : '') +
+            (who ? '&me=' + who : '') + (chans ? '&ch=' + chans : '') +
+            (bye ? '&bye=1' : ''))
           .catch(() => {}));
       }
       return reply({ ok: true }, origin, 200, TTL_FAIL);
