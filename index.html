@@ -531,7 +531,7 @@ the same <code>{type: 'stream'}</code> reports.</p>
   // bye never retries - the page is going away. 4xx is final, not retried
   let beatN = 0, beatErr = 0, retryN = 0, retryTimer = 0, lastFailed = false;
   const relayWorker = (ev = 'tick') => {
-    if (relayQs.has('overlay') || !relayLive) return;
+    if (relayQs.has('overlay') || !relayLive || /^(localhost|127\.0\.0\.1)$/.test(siteTag)) return;
     const bye = ev === 'bye';
     fetch(`${PEEK_URL}?relay=${relayId}${siteTag ? '&via=' + siteTag : ''}${meTag ? '&me=' + meTag : ''}` +
         `${channels.size ? '&ch=' + [...channels].join(',') : ''}${auth ? '&au=1' : ''}` +

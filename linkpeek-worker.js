@@ -764,10 +764,13 @@ export default {
         const n = /^\d{1,4}$/.test(np) ? np : '';
         const ep = self.searchParams.get('err') || '';
         const err = /^\d{1,4}$/.test(ep) ? ep : '';
-        if (env.RELAYS) env.RELAYS.writeDataPoint({
+        // only beats with an ev count: the relay sends none before channel
+        // data arrives. local dev pages are not viewers either
+        const counted = ev && !/^(localhost|127\.0\.0\.1)$/i.test(site);
+        if (counted && env.RELAYS) env.RELAYS.writeDataPoint({
           blobs: [relay, bye ? 'bye' : 'ping', site, who, chans, vis, au ? 'au' : ''] });
         // raw archive copy - the VPS log keeps relays past AE's 92-day cap
-        ctx.waitUntil(fetch('https://orange.thingsandstuff.org/use?id=' + relay +
+        if (counted) ctx.waitUntil(fetch('https://orange.thingsandstuff.org/use?id=' + relay +
             (site ? '&via=' + encodeURIComponent(site) : '') +
             (who ? '&me=' + who : '') + (chans ? '&ch=' + chans : '') +
             (vis ? '&vis=' + vis : '') + (au ? '&au=1' : '') +
