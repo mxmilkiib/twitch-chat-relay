@@ -502,8 +502,8 @@ the same <code>{type: 'stream'}</code> reports.</p>
       return id;
     } catch { return Math.random().toString(36).slice(2, 14); }
   })();
-  // with no me label set, a random per-browser id in localStorage stands
-  // in, so a second tab folds into the same person; a me label wins
+  // a random per-browser id in localStorage rides its own vid param, so a
+  // second tab folds into the same person; me stays the viewer's own label
   const visitorId = (() => {
     try {
       const id = localStorage.getItem('vid') || Math.random().toString(36).slice(2, 12);
@@ -511,7 +511,7 @@ the same <code>{type: 'stream'}</code> reports.</p>
       return id;
     } catch { return ''; }
   })();
-  let meTag = (localStorage.getItem('me') || visitorId).replace(/[^a-z0-9]/gi, '').slice(0, 12);
+  let meTag = (localStorage.getItem('me') || '').replace(/[^a-z0-9]/gi, '').slice(0, 12);
   // which page embedded the relay: an explicit ?via= wins, else the iframe
   // navigation's referrer carries the embedder's origin. a stripped or
   // absent referrer (privacy tools, a direct load) gets filled in by the
@@ -520,7 +520,7 @@ the same <code>{type: 'stream'}</code> reports.</p>
   const hostOf = (u) => { try { return new URL(u).hostname; } catch { return ''; } };
   let siteTag = (relayQs.get('via') || hostOf(document.referrer))
     .replace(/[^a-z0-9.-]/gi, '').toLowerCase().slice(0, 63);
-  // each beat names its trigger (ev: load, tick, vis, me, bye), its count
+  // each beat names its trigger (ev: load, tick, vis, me, retry, bye), its count
   // within this page load (n) and how many earlier beats failed (err), so
   // the log shows which triggers fire and whether the fetches land
   // a failed beat (network error, 429 or 5xx) retries at most 3 times in a
@@ -533,7 +533,7 @@ the same <code>{type: 'stream'}</code> reports.</p>
   const relayWorker = (ev = 'tick') => {
     if (relayQs.has('overlay') || !relayLive || /^(localhost|127\.0\.0\.1)$/.test(siteTag)) return;
     const bye = ev === 'bye';
-    fetch(`${PEEK_URL}?relay=${relayId}${siteTag ? '&via=' + siteTag : ''}${meTag ? '&me=' + meTag : ''}` +
+    fetch(`${PEEK_URL}?relay=${relayId}${siteTag ? '&via=' + siteTag : ''}${meTag ? '&me=' + meTag : ''}${visitorId ? '&vid=' + visitorId : ''}` +
         `${channels.size ? '&ch=' + [...channels].join(',') : ''}${auth ? '&au=1' : ''}` +
         `&vis=${document.visibilityState === 'hidden' ? 'h' : 'v'}${bye ? '&bye=1' : ''}` +
         `&ev=${ev}&n=${++beatN}&err=${beatErr}`,
@@ -544,12 +544,12 @@ the same <code>{type: 'stream'}</code> reports.</p>
         beatErr++;
         lastFailed = true;
         if (bye || retryTimer || retryN >= 3) return;
-        retryTimer = setTimeout(() => { retryTimer = 0; retryN++; relayWorker('tick'); },
+        retryTimer = setTimeout(() => { retryTimer = 0; retryN++; relayWorker('retry'); },
           5e3 * 3 ** retryN * (1 + Math.random() * .5));
       });
   };
   // coming back online after a failed beat is worth one prompt resend
-  addEventListener('online', () => { if (lastFailed && !retryTimer) relayWorker('tick'); });
+  addEventListener('online', () => { if (lastFailed && !retryTimer) relayWorker('retry'); });
   // backgrounding flips what 'live' means - ping on the change so the
   // state lands in the log now rather than at the next tick
   document.addEventListener('visibilitychange', () => relayWorker('vis'));

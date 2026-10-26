@@ -759,7 +759,9 @@ export default {
         const vis = /^[vh]$/.test(self.searchParams.get('vis') || '') ? self.searchParams.get('vis') : '';
         const au = self.searchParams.get('au') === '1';
         const evp = self.searchParams.get('ev') || '';
-        const ev = /^(load|tick|vis|me|bye)$/.test(evp) ? evp : '';
+        const ev = /^(load|tick|vis|me|retry|bye)$/.test(evp) ? evp : '';
+        const vp = self.searchParams.get('vid') || '';
+        const vid = /^[a-z0-9]{1,12}$/i.test(vp) ? vp : '';
         const np = self.searchParams.get('n') || '';
         const n = /^\d{1,4}$/.test(np) ? np : '';
         const ep = self.searchParams.get('err') || '';
@@ -768,11 +770,11 @@ export default {
         // data arrives. local dev pages are not viewers either
         const counted = ev && !/^(localhost|127\.0\.0\.1)$/i.test(site);
         if (counted && env.RELAYS) env.RELAYS.writeDataPoint({
-          blobs: [relay, bye ? 'bye' : 'ping', site, who, chans, vis, au ? 'au' : ''] });
+          blobs: [relay, bye ? 'bye' : 'ping', site, who, chans, vis, au ? 'au' : '', vid] });
         // raw archive copy - the VPS log keeps relays past AE's 92-day cap
         if (counted) ctx.waitUntil(fetch('https://orange.thingsandstuff.org/use?id=' + relay +
             (site ? '&via=' + encodeURIComponent(site) : '') +
-            (who ? '&me=' + who : '') + (chans ? '&ch=' + chans : '') +
+            (who ? '&me=' + who : '') + (vid ? '&vid=' + vid : '') + (chans ? '&ch=' + chans : '') +
             (vis ? '&vis=' + vis : '') + (au ? '&au=1' : '') +
             (bye ? '&bye=1' : '') + (ev ? '&ev=' + ev : '') + (n ? '&n=' + n : '') +
             (err ? '&err=' + err : ''))
