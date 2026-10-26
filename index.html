@@ -502,7 +502,16 @@ the same <code>{type: 'stream'}</code> reports.</p>
       return id;
     } catch { return Math.random().toString(36).slice(2, 14); }
   })();
-  let meTag = (localStorage.getItem('me') || '').replace(/[^a-z0-9]/gi, '').slice(0, 12);
+  // with no me label set, a random per-browser id in localStorage stands
+  // in, so a second tab folds into the same person; a me label wins
+  const visitorId = (() => {
+    try {
+      const id = localStorage.getItem('vid') || Math.random().toString(36).slice(2, 12);
+      localStorage.setItem('vid', id);
+      return id;
+    } catch { return ''; }
+  })();
+  let meTag = (localStorage.getItem('me') || visitorId).replace(/[^a-z0-9]/gi, '').slice(0, 12);
   // which page embedded the relay: an explicit ?via= wins, else the iframe
   // navigation's referrer carries the embedder's origin. a stripped or
   // absent referrer (privacy tools, a direct load) gets filled in by the
