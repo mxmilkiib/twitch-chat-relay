@@ -729,6 +729,37 @@ async function gimg(raw, origin, ctx) {
 // minute while alive - each lands in the analytics dataset, which answers
 // unique-viewer counts over arbitrary windows via GraphQL
 
+// beat flood limits per minute: one relay id (a tab beats about once a
+// minute plus event beats) and one IP (a shared NAT can hold many real
+// viewers). one global durable object holds the counters: the rate-limit
+// binding never refused a request here, the cache api is a no-op on
+// workers.dev, and per-isolate counters shard across isolates
+const BEAT_ID_MAX = 8, BEAT_IP_MAX = 120;
+export class BeatLimiter {
+  constructor() { this.counts = new Map(); this.window = 0; }
+  async fetch(request) {
+    const q = new URL(request.url).searchParams;
+    const w = Math.floor(Date.now() / 60e3);
+    if (w !== this.window) { this.counts.clear(); this.window = w; }
+    const hit = (key, max) => {
+      const n = (this.counts.get(key) || 0) + 1;
+      this.counts.set(key, n);
+      return n > max;
+    };
+    const over = [hit('id-' + q.get('id'), BEAT_ID_MAX), hit('ip-' + q.get('ip'), BEAT_IP_MAX)];
+    return new Response(over.some(Boolean) ? 'over' : 'ok');
+  }
+}
+// fails open: a limiter outage must not stop presence counting
+async function withinLimit(env, relay, ip) {
+  if (!env.BEAT_LIMITER) return true;
+  try {
+    const res = await env.BEAT_LIMITER.get(env.BEAT_LIMITER.idFromName('beats'))
+      .fetch(`https://beat-limiter/?id=${encodeURIComponent(relay)}&ip=${encodeURIComponent(ip)}`);
+    return (await res.text()) === 'ok';
+  } catch { return true; }
+}
+
 export default {
   async fetch(request, env, ctx) {
     const origin = request.headers.get('Origin') || '';
@@ -768,7 +799,11 @@ export default {
         const err = /^\d{1,4}$/.test(ep) ? ep : '';
         // only beats with an ev count: the relay sends none before channel
         // data arrives. local dev pages are not viewers either
-        const counted = ev && !/^(localhost|127\.0\.0\.1)$/i.test(site);
+        // over-limit beats are dropped but answered 200, so the relay's
+        // retry logic doesn't pile more requests on a flooded id or IP
+        const ip = request.headers.get('CF-Connecting-IP') || '';
+        const within = await withinLimit(env, relay, ip);
+        const counted = within && ev && !/^(localhost|127\.0\.0\.1)$/i.test(site);
         if (counted && env.RELAYS) env.RELAYS.writeDataPoint({
           blobs: [relay, bye ? 'bye' : 'ping', site, who, chans, vis, au ? 'au' : '', vid] });
         // raw archive copy - the VPS log keeps relays past AE's 92-day cap

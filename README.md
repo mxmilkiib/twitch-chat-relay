@@ -123,6 +123,50 @@ JSON-LD, `<title>`/description, the page's advertised oEmbed endpoint,
 its icon and theme-color, and any author and publish date. Hits cache
 for a day.
 
+## Presence beats
+
+The relay page counts a browser only once its socket has delivered channel
+data (a `ROOMSTATE`, `PRIVMSG`, `USERNOTICE` or `CLEARCHAT`). From then it
+sends a beat to the Worker as `GET /?relay=<id>&...`: on that first data
+(`ev=load`), about every 60-70 s (`tick`), on tab visibility changes (`vis`),
+when the embedder messages a `me` tag (`me`), on a retry after a failed beat
+(`retry`, at most 3 in a row, 5/15/45 s), and on `pagehide` (`bye`, never
+retried). `?overlay` pages, and pages embedded from `localhost` or
+`127.0.0.1`, send nothing. These are the only accepted values; the relay,
+the Worker, nginx and `server/mkstats.py` each check them, so a change goes
+in all four:
+
+| param | value |
+|---|---|
+| `relay` | `[a-z0-9]{4,24}` per-tab id (sessionStorage) |
+| `via` | `[a-z0-9][a-z0-9.-]{0,62}` embedding host |
+| `me` | `[a-z0-9]{1,12}` the viewer's own label |
+| `vid` | `[a-z0-9]{1,12}` per-browser id (localStorage) |
+| `ch` | up to 6 comma-separated `[a-z0-9_]{2,25}` |
+| `vis` | `v` or `h` |
+| `au` / `bye` | `1` |
+| `ev` | `load`, `tick`, `vis`, `me`, `retry`, `bye` |
+| `n` / `err` | `\d{1,4}` beat count in this page load / failed beats so far |
+
+The Worker writes valid beats to Analytics Engine and forwards them to
+`orange.thingsandstuff.org/use`, where nginx appends one line to
+`/var/log/nginx/use.txt` (`-` for a missing field), and only for beats that
+carry an `ev` and a non-local `via`:
+
+`timestamp id via bye me channels vis au ev n err vid`
+
+A Durable Object caps beats at 8 a minute per id and 120 a minute per IP;
+over-limit beats are dropped with a 200, and the limiter fails open.
+`server/mkstats.py` (cron, every minute) is the one validator of the raw
+log: it writes `stats.json` and the public 30-day `beats.txt` feed (the
+first 8 fields only) the dashboard reads. The raw log stays private.
+`server/usehealth.py` (cron, every 10 minutes) warns to syslog when
+`stats.json` goes stale or no beat has landed for 3 hours. Both live in
+`/opt/use-stats/` on the server; `python3 server/test_mkstats.py` runs their
+tests. A session is one id's beats with no gap over 3 minutes, and a session
+without a `bye` still counts as live for 3 minutes after its last beat (one
+value, `session_s` in `stats.json`).
+
 ## Deploy
 
 Push to `main`; GitHub Pages serves it.

@@ -9,6 +9,15 @@ workers_dev = true
 binding = "RELAYS"
 dataset = "hasanabi_chat_thing_use"
 
+# presence beat flood limiter - one global counter per relay id and per IP
+[[durable_objects.bindings]]
+name = "BEAT_LIMITER"
+class_name = "BeatLimiter"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["BeatLimiter"]
+
 # global giphy result store - unlike the per-colo edge cache, one
 # viewer's upstream hit serves every viewer until the entry's ttl lapses.
 # create it once, then uncomment and paste the id it prints:
