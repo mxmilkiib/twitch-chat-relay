@@ -25,6 +25,7 @@ the same <code>{type: 'stream'}</code> reports.</p>
   const WS_URL = 'wss://irc-ws.chat.twitch.tv:443';
   let ws;
   const channels = new Set(); // joined channels; every message tags its own
+  let relayLive = false; // set once the socket has delivered channel data
   const MAX_CHANNELS = 6;
   // Open Graph previews come from a Cloudflare worker - the embedder's
   // connect-src is 'self', and arbitrary page fetches need a server anyway
@@ -75,6 +76,10 @@ the same <code>{type: 'stream'}</code> reports.</p>
           return;
         }
         else if (line.includes(' 001 ')) { reconnectAttempt = 0; setStatus('connected'); }
+        // a channel's ROOMSTATE or chat line is the first real chat data -
+        // presence beats only start from here, so pages that never reach
+        // a channel (bots, previews, failed joins) stay out of the log
+        if (!relayLive && / (?:ROOMSTATE|PRIVMSG|USERNOTICE|CLEARCHAT) #/.test(line)) { relayLive = true; relayWorker('load'); }
       }
       send({ type: 'lines', lines });
     };
@@ -511,7 +516,7 @@ the same <code>{type: 'stream'}</code> reports.</p>
   // the log shows which triggers fire and whether the fetches land
   let beatN = 0, beatErr = 0;
   const relayWorker = (ev = 'tick') => {
-    if (relayQs.has('overlay')) return;
+    if (relayQs.has('overlay') || !relayLive) return;
     const bye = ev === 'bye';
     fetch(`${PEEK_URL}?relay=${relayId}${siteTag ? '&via=' + siteTag : ''}${meTag ? '&me=' + meTag : ''}` +
         `${channels.size ? '&ch=' + [...channels].join(',') : ''}${auth ? '&au=1' : ''}` +
@@ -522,7 +527,6 @@ the same <code>{type: 'stream'}</code> reports.</p>
   // backgrounding flips what 'live' means - ping on the change so the
   // state lands in the log now rather than at the next tick
   document.addEventListener('visibilitychange', () => relayWorker('vis'));
-  relayWorker('load');
   // a fixed tick herds every viewer into lockstep after a mass reload -
   // the up-to-10s jitter keeps the writes scattered
   const pingLoop = () => setTimeout(() => { relayWorker(); pingLoop(); }, 60e3 + Math.random() * 10e3);
