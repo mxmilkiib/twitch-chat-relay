@@ -758,6 +758,12 @@ export default {
         const chans = /^[a-z0-9_]{2,25}(,[a-z0-9_]{2,25}){0,5}$/i.test(ch) ? ch : '';
         const vis = /^[vh]$/.test(self.searchParams.get('vis') || '') ? self.searchParams.get('vis') : '';
         const au = self.searchParams.get('au') === '1';
+        const evp = self.searchParams.get('ev') || '';
+        const ev = /^(load|tick|vis|me|bye)$/.test(evp) ? evp : '';
+        const np = self.searchParams.get('n') || '';
+        const n = /^\d{1,4}$/.test(np) ? np : '';
+        const ep = self.searchParams.get('err') || '';
+        const err = /^\d{1,4}$/.test(ep) ? ep : '';
         if (env.RELAYS) env.RELAYS.writeDataPoint({
           blobs: [relay, bye ? 'bye' : 'ping', site, who, chans, vis, au ? 'au' : ''] });
         // raw archive copy - the VPS log keeps relays past AE's 92-day cap
@@ -765,7 +771,8 @@ export default {
             (site ? '&via=' + encodeURIComponent(site) : '') +
             (who ? '&me=' + who : '') + (chans ? '&ch=' + chans : '') +
             (vis ? '&vis=' + vis : '') + (au ? '&au=1' : '') +
-            (bye ? '&bye=1' : ''))
+            (bye ? '&bye=1' : '') + (ev ? '&ev=' + ev : '') + (n ? '&n=' + n : '') +
+            (err ? '&err=' + err : ''))
           .catch(() => {}));
       }
       return reply({ ok: true }, origin, 200, TTL_FAIL);

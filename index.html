@@ -506,22 +506,28 @@ the same <code>{type: 'stream'}</code> reports.</p>
   const hostOf = (u) => { try { return new URL(u).hostname; } catch { return ''; } };
   let siteTag = (relayQs.get('via') || hostOf(document.referrer))
     .replace(/[^a-z0-9.-]/gi, '').toLowerCase().slice(0, 63);
-  const relayWorker = (bye) => {
+  // each beat names its trigger (ev: load, tick, vis, me, bye), its count
+  // within this page load (n) and how many earlier beats failed (err), so
+  // the log shows which triggers fire and whether the fetches land
+  let beatN = 0, beatErr = 0;
+  const relayWorker = (ev = 'tick') => {
     if (relayQs.has('overlay')) return;
+    const bye = ev === 'bye';
     fetch(`${PEEK_URL}?relay=${relayId}${siteTag ? '&via=' + siteTag : ''}${meTag ? '&me=' + meTag : ''}` +
         `${channels.size ? '&ch=' + [...channels].join(',') : ''}${auth ? '&au=1' : ''}` +
-        `&vis=${document.visibilityState === 'hidden' ? 'h' : 'v'}${bye ? '&bye=1' : ''}`,
-        bye ? { keepalive: true } : {}).catch(() => {});
+        `&vis=${document.visibilityState === 'hidden' ? 'h' : 'v'}${bye ? '&bye=1' : ''}` +
+        `&ev=${ev}&n=${++beatN}&err=${beatErr}`,
+        bye ? { keepalive: true } : {}).catch(() => { beatErr++; });
   };
   // backgrounding flips what 'live' means - ping on the change so the
   // state lands in the log now rather than at the next tick
-  document.addEventListener('visibilitychange', () => relayWorker());
-  relayWorker();
+  document.addEventListener('visibilitychange', () => relayWorker('vis'));
+  relayWorker('load');
   // a fixed tick herds every viewer into lockstep after a mass reload -
   // the up-to-10s jitter keeps the writes scattered
   const pingLoop = () => setTimeout(() => { relayWorker(); pingLoop(); }, 60e3 + Math.random() * 10e3);
   pingLoop();
-  addEventListener('pagehide', () => relayWorker(true));
+  addEventListener('pagehide', () => relayWorker('bye'));
 
   window.addEventListener('message', (event) => {
     const d = event.data;
@@ -539,7 +545,7 @@ the same <code>{type: 'stream'}</code> reports.</p>
     // on beats; re-ping so the tag lands in the log without waiting a tick
     if (d.type === 'me') {
       if (peer && event.source === peer.source && event.origin === peer.origin
-          && typeof d.me === 'string' && /^[a-z0-9]{1,12}$/i.test(d.me)) { meTag = d.me; relayWorker(); }
+          && typeof d.me === 'string' && /^[a-z0-9]{1,12}$/i.test(d.me)) { meTag = d.me; relayWorker('me'); }
       return;
     }
     // one-shot live probe for channels outside the join set - the same
