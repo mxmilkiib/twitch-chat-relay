@@ -523,7 +523,13 @@ the same <code>{type: 'stream'}</code> reports.</p>
   // each beat names its trigger (ev: load, tick, vis, me, bye), its count
   // within this page load (n) and how many earlier beats failed (err), so
   // the log shows which triggers fire and whether the fetches land
-  let beatN = 0, beatErr = 0;
+  // a failed beat (network error, 429 or 5xx) retries at most 3 times in a
+  // row, 5s then 15s then 45s with jitter, one pending retry at a time, each
+  // resending the current state rather than the stale one. a success resets
+  // the budget and cancels a pending retry; an unbroken failure streak (a
+  // blocked endpoint) stops after the budget instead of retrying each tick.
+  // bye never retries - the page is going away. 4xx is final, not retried
+  let beatN = 0, beatErr = 0, retryN = 0, retryTimer = 0, lastFailed = false;
   const relayWorker = (ev = 'tick') => {
     if (relayQs.has('overlay') || !relayLive) return;
     const bye = ev === 'bye';
@@ -531,8 +537,19 @@ the same <code>{type: 'stream'}</code> reports.</p>
         `${channels.size ? '&ch=' + [...channels].join(',') : ''}${auth ? '&au=1' : ''}` +
         `&vis=${document.visibilityState === 'hidden' ? 'h' : 'v'}${bye ? '&bye=1' : ''}` +
         `&ev=${ev}&n=${++beatN}&err=${beatErr}`,
-        bye ? { keepalive: true } : {}).catch(() => { beatErr++; });
+        bye ? { keepalive: true } : {})
+      .then((r) => { if (r.status === 429 || r.status >= 500) throw r.status; })
+      .then(() => { lastFailed = false; retryN = 0; clearTimeout(retryTimer); retryTimer = 0; })
+      .catch(() => {
+        beatErr++;
+        lastFailed = true;
+        if (bye || retryTimer || retryN >= 3) return;
+        retryTimer = setTimeout(() => { retryTimer = 0; retryN++; relayWorker('tick'); },
+          5e3 * 3 ** retryN * (1 + Math.random() * .5));
+      });
   };
+  // coming back online after a failed beat is worth one prompt resend
+  addEventListener('online', () => { if (lastFailed && !retryTimer) relayWorker('tick'); });
   // backgrounding flips what 'live' means - ping on the change so the
   // state lands in the log now rather than at the next tick
   document.addEventListener('visibilitychange', () => relayWorker('vis'));
